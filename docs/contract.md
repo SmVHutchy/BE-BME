@@ -28,8 +28,8 @@ parametrierbar sein. In GLSL waere sie keines davon.
 
 ## 2. Verbindung
 
-- Endpunkt: `ws://{server.host}:{server.port}{server.ws_path}` — Voreinstellung
-  `ws://127.0.0.1:8000/ws`.
+- Endpunkt: `ws://{host}:{port}{ws_path}` aus `params.yaml → server` —
+  Voreinstellung `ws://127.0.0.1:8000/ws`.
 - `sim` verbindet beim Start und haelt die Verbindung.
 - Alle Nachrichten sind JSON-Textrahmen, UTF-8.
 - Es gibt **keinen Envelope und kein `type`-Feld**. Die Nachrichtenart wird am
@@ -55,7 +55,14 @@ Faellt `core` aus, faellt damit der Chronikpfad aus, nicht die Welt.
 
 ## 3. `sim → core`: Metriken
 
-Alle 5 Sekunden Wanduhrzeit (`sim.readback_interval_s`).
+Alle 5 Sekunden Wanduhrzeit (`params.yaml → sim.readback_interval_s`).
+
+> **Lesehilfe.** In diesem Dokument bezeichnen Schluessel wie `mass.total` immer
+> **Felder der Nachricht**. Verweise auf die Konfiguration tragen durchgaengig
+> den Dateinamen vorweg, etwa `params.yaml → mass.drift_tolerance_pct`. Die
+> beiden Namensraeume ueberschneiden sich — es gibt ein `mass`-Objekt in der
+> Nachricht *und* einen `mass`-Abschnitt in der Konfiguration —, deshalb die
+> Unterscheidung.
 
 ```json
 { "t": "ISO8601", "tick": 12345,
@@ -97,14 +104,14 @@ Eintrag ist der Niederschlag, Austrag die Sedimentation (Exposé §6.2).
 > nachweisbar — man koennte nur die Konstanz der Gesamtmasse pruefen, und die
 > ist bei offenem Eintrag und Austrag das falsche Kriterium.
 
-Toleranz: `mass.drift_tolerance_pct`.
+Toleranz: `params.yaml → mass.drift_tolerance_pct`.
 
 ---
 
 ## 4. `core → sim`: Klimakanal
 
-Bei Aenderung, typischerweise stuendlich, geglaettet ueber die
-`smoothing_minutes` der jeweiligen Kopplung.
+Bei Aenderung, typischerweise stuendlich, geglaettet ueber
+`params.yaml → coupling` und dort `smoothing_minutes` der jeweiligen Kopplung.
 
 ```json
 { "env": { "light": 0.0, "nutrient_input": 0.0, "rate": 0.0,
@@ -127,8 +134,14 @@ Die Umrechnung in einen Stroemungsvektor geschieht in `sim`.
 `rate` ist ein Multiplikator auf den Zeitschritt. Der wirksame Zeitschritt ist
 
 ```
-dt_eff = sim.dt_base * env.rate * sim.speed
+dt_eff = dt_base * rate * speed
+         ^^^^^^^   ^^^^   ^^^^^
+         Config    diese  Config
+                   Nachricht
 ```
+
+Also `params.yaml → sim.dt_base` und `params.yaml → sim.speed` aus der
+Konfiguration, `rate` aus dieser Nachricht.
 
 `sim.speed` ist der Zeitraffer und **keine siebte Kopplung**, sondern eine
 Betriebsgroesse (siehe [mapping.md](mapping.md)).

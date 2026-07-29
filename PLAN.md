@@ -133,7 +133,7 @@ Nach jeder Phase wird angehalten und auf Freigabe gewartet.
 
 | Phase | Inhalt | Prüfbar an |
 |---|---|---|
-| **0** | Gerüst und Vertrag. `PLAN.md`, `CLAUDE.md`, Ordnerstruktur, `config/params.yaml`, `docs/contract.md`, `docs/mapping.md`, `docs/expose.md`. Keine Logik. | Ein fremder Entwickler versteht aus `PLAN.md` und `docs/contract.md`, was gebaut wird und wie die beiden Prozesse reden. |
+| **0** | Gerüst und Vertrag. `PLAN.md`, `CLAUDE.md`, Ordnerstruktur, `config/params.yaml`, `docs/contract.md`, `docs/mapping.md`, `docs/expose.md`. Keine Logik. | Ein fremder Entwickler versteht aus `PLAN.md` und `docs/contract.md`, was gebaut wird und wie die beiden Prozesse reden. `scripts/verify_structure.py` läuft durch. |
 | **1** | Core ohne CrewAI. Umweltdienst, Metrikspeicher, Regeldetektor, `SingleChronicle`, WebSocket-Server. | Eingespeiste synthetische Metriken lösen genau dann eine „Blüte" aus, wenn sie sollen. Tests für Detektor und Massenbilanz grün. |
 | **2** | Simulation. GLSL-Kern, geschlossener Kreislauf, Klimakopplung, Pulsempfang, Zeitraffer, Snapshot/Restore. | 10.000 Ticks im Zeitraffer ohne Absturz, Massendrift unter 2 %. |
 | **3** | CrewAI. Flow und Crew, `CrewChronicle`, Umschaltung. | Ein Chronikeintrag, dessen sämtliche Zahlen sich in der SQLite-Datenbank wiederfinden. Umschalten auf `single` ohne Codeänderung. |

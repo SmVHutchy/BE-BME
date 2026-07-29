@@ -27,6 +27,19 @@ Danach `http://localhost:5173` im Browser öffnen.
 
 ---
 
+## Struktur prüfen
+
+```bash
+uv run --with pyyaml python scripts/verify_structure.py
+```
+
+Prüft, dass genau sechs Kopplungen mit sechs verschiedenen Angriffspunkten
+existieren, dass alle in der Dokumentation genannten Parameter in
+`config/params.yaml` vorhanden sind und dass die Interaktionsform nirgends —
+auch nicht implizit — festgelegt wurde. Läuft ohne installierte Abhängigkeiten.
+
+---
+
 ## Dokumentation
 
 | Datei | Inhalt |
