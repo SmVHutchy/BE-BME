@@ -177,7 +177,9 @@ der Crew-Pfad bleibt darunter, weil `verifier` nur den Entwurf und dieselben
 Zahlen sieht.
 
 **Messung am 29.07.2026** gegen `/v1/chat/completions`, RX 7600 XT, Modell
-geladen, Flash Attention aktiv:
+geladen, Flash Attention aktiv.
+
+Erste Messung mit einem **Minimalprompt** (144 Prompt-Tokens):
 
 | Einstellung | Tokens gesamt | davon Reasoning | Dauer | Ergebnis |
 |---|---|---|---|---|
@@ -185,13 +187,34 @@ geladen, Flash Attention aktiv:
 | `reasoning_effort: low` | 535 | 473 | 19,4 s | 62 Tokens Text |
 | `enable_thinking: false` | 511 | 446 | 18,6 s | 65 Tokens Text |
 
-Daraus folgt dreierlei. Erstens zaehlen die Reasoning-Tokens gegen `max_tokens`;
-der urspruengliche Wert 220 haette **stillschweigend leere Eintraege** erzeugt.
-Zweitens laesst sich das Reasoning nicht abschalten, nur daempfen. Drittens ist
-die Latenz mit rund 20 s je Aufruf zwar unkritisch bei einem Mindestabstand von
-20 Minuten zwischen Eintraegen, aber deutlich hoeher als die Formulierung in
-Expose 7.4 nahelegt - der Crew-Pfad liegt bei etwa 40 s, auf der Ziel-APU
-entsprechend hoeher.
+Zweite Messung mit dem **echten Chronik-Prompt** (595 Prompt-Tokens, also
+Regelwerk und Beispiel):
+
+| Einstellung | Tokens gesamt | davon Reasoning | finish | Dauer | Ergebnis |
+|---|---|---|---|---|---|
+| `max_tokens: 900`, effort low | 900 | 897 | length | 34,2 s | leer |
+| `max_tokens: 2000`, effort low | 2000 | 1997 | length | 74,2 s | leer |
+| `max_tokens: 4000`, effort low | 3426 | 3337 | stop | 129,4 s | Text |
+| `max_tokens: 4000`, **ohne effort** | 1980 | 1868 | stop | **73,4 s** | Text |
+
+Die zweite Messung korrigiert die erste in zwei Punkten, und beide Korrekturen
+sind fuer die Arbeit relevant:
+
+1. **Der Reasoning-Bedarf haengt am Prompt, nicht am Modell allein.** Mit dem
+   ausfuehrlichen Regelwerk denkt das Modell rund viermal so lange wie mit einem
+   Minimalprompt. Wer die Prompts in `chronicle/prompts/` aendert, muss
+   `max_tokens` neu messen - sonst entstehen wieder stillschweigend leere
+   Eintraege.
+2. **`reasoning_effort: "low"` ist kontraproduktiv.** Es hat das Reasoning
+   nahezu verdoppelt (1868 -> 3337 Tokens) und die Dauer von 73 s auf 129 s
+   gebracht. LM Studio setzt den Parameter fuer dieses Modell offenbar nicht
+   sinnvoll um. Er wird deshalb nicht mehr gesendet.
+
+Damit liegt die tatsaechliche Latenz bei **rund 73 s je Aufruf**, nicht bei 20 s
+wie zunaechst angenommen - der Crew-Pfad mit zwei Agenten entsprechend bei etwa
+150 s, auf der Ziel-APU beim Mehrfachen. Bei einem Mindestabstand von 20 Minuten
+zwischen Eintraegen traegt das noch, aber der Abstand zu Expose 7.4
+("Generierungslatenz unkritisch") ist deutlich groesser als dort angenommen.
 
 **Offene Frage fuer Phase 3.** Fuer die Aufgabe "drei nuechterne Saetze aus
 gegebenen Zahlen" ist ein Reasoning-Modell moeglicherweise das falsche Werkzeug;

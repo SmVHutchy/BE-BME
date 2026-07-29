@@ -263,6 +263,13 @@ environment:
   # und der Zustand wandert ins Health-Log.
   stale_after_hours: 3.0
 
+  # Abstand, in dem `core` die geglaetteten Klimawerte an `sim` schickt.
+  # Deutlich kuerzer als poll_interval_min, weil zwischen zwei Abrufen
+  # interpoliert und geglaettet wird - der Wert aendert sich also laufend, nicht
+  # nur stuendlich. Deutlich laenger als der Metriktakt, weil ein Kanal mit
+  # Zeitkonstante Stunden nicht sekuendlich nachgefuehrt werden muss.
+  push_interval_s: 30.0
+
 
 # --- Audiodienst (Ereigniskanal) --------------------------------------------
 # In Prototyp 0 nur als Stub hinter dem endgueltigen Interface. Es werden
@@ -352,17 +359,33 @@ chronicle:
   # Niedrig: Der Eintrag soll die Zahlen wiedergeben, nicht ausschmuecken.
   temperature: 0.3
 
-  # ACHTUNG, gemessen am 29.07.2026: Gemma 4 ist ein Reasoning-Modell und
-  # verbraucht 446-697 Tokens fuers Denken, BEVOR ein Zeichen Antwort entsteht.
-  # Die Reasoning-Tokens zaehlen gegen max_tokens. Bei 220 kam ein leerer String
-  # zurueck - ohne Fehlermeldung. Der Wert muss also das Denkbudget und den
-  # eigentlichen Eintrag zusammen abdecken.
-  max_tokens: 900
+  # ACHTUNG: Gemma 4 ist ein Reasoning-Modell. Die Reasoning-Tokens zaehlen
+  # gegen max_tokens und entstehen VOR dem ersten Zeichen Antwort - ein zu
+  # kleiner Wert liefert stillschweigend einen leeren String, ohne Fehler.
+  #
+  # Gemessen am 29.07.2026 mit dem echten Chronik-Prompt (595 Prompt-Tokens):
+  #     max_tokens = 900   -> 897 Reasoning,  finish=length, LEER
+  #     max_tokens = 2000  -> 1997 Reasoning, finish=length, LEER
+  #     max_tokens = 4000  -> 1868-4000 Reasoning, schwankend, teils LEER
+  #     max_tokens = 4000 + disable_thinking -> 2018, finish=stop, Text (79 s)
+  #
+  # 5000 ist Reserve gegen die Streuung: Der Wert ist eine Obergrenze und kostet
+  # keine Zeit, solange er nicht ausgeschoepft wird. Kontextlaenge 8192 minus
+  # rund 600 Prompt-Tokens laesst den Spielraum zu.
+  max_tokens: 5000
 
-  # Senkt das Reasoning-Budget, wo das Modell den Parameter kennt (gemessen:
-  # 697 -> 473 Tokens). Abschalten laesst es sich nicht. Wird durchgereicht und
-  # von Modellen ohne Reasoning ignoriert.
-  reasoning_effort: "low"
+  # Leer = wird nicht gesendet. Das ist ein Messergebnis, keine Nachlaessigkeit:
+  # Mit "low" STIEG das Reasoning auf 3337 Tokens und 129 s, ohne den Parameter
+  # blieb es bei 1868 und 73 s. LM Studio setzt reasoning_effort fuer dieses
+  # Modell offenbar nicht sinnvoll um. Der Schluessel bleibt bestehen, weil
+  # andere Modelle ihn korrekt behandeln - dann eintragen und nachmessen.
+  reasoning_effort: ""
+
+  # Sendet chat_template_kwargs={"enable_thinking": false}. Schaltet das
+  # Reasoning nicht ab, daempft es aber wirksam und reproduzierbar: 2018 statt
+  # bis zu 4000 Tokens, und erstmals zuverlaessig finish=stop statt length.
+  # Modelle ohne Reasoning ignorieren den Schluessel.
+  disable_thinking: true
 
   # Grosszuegig - Eintraege entstehen asynchron und selten, Latenz ist auf
   # diesem Pfad unkritisch (Expose 7.4). Gemessen: 19-25 s je Aufruf auf einer

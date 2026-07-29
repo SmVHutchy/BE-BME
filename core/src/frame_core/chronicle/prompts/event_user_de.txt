@@ -1,0 +1,10 @@
+Ereignis: {event_type}
+Tick: {tick}
+
+Kennzahlen:
+{metrics}
+
+Wetterlage:
+{weather}
+
+Schreibe den Logbucheintrag.

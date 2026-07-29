@@ -205,6 +205,7 @@ class EnvironmentConfig(BaseModel):
     precipitation_unit: str
     cache_days: int = Field(gt=0)
     stale_after_hours: float = Field(gt=0.0)
+    push_interval_s: float = Field(gt=0.0)
 
 
 class AudioConfig(BaseModel):
@@ -253,6 +254,7 @@ class ChronicleConfig(BaseModel):
     temperature: float = Field(ge=0.0, le=2.0)
     max_tokens: int = Field(gt=0)
     reasoning_effort: str
+    disable_thinking: bool
     timeout_s: float = Field(gt=0.0)
     editor_enabled: bool
     min_interval_minutes: float = Field(ge=0.0)
