@@ -1,0 +1,17 @@
+{
+  "name": "frame-sim",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Simulationskern des Oekosystems im Bilderrahmen - GLSL-Fragment-Shader mit Ping-Pong-FBOs auf WebGL2",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5"
+  }
+}

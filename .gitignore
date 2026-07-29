@@ -1,0 +1,26 @@
+# Laufzeitdaten: SQLite, Snapshots, Wetter-Rohlog, Health-Log.
+# Bewusst nicht versioniert - ein Lauf wird aus Seed, Config und Wetterlog
+# rekonstruiert, nicht aus eingecheckten Binaerdaten.
+data/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Umgebung
+.env
+
+# Werkzeuge
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

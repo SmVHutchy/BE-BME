@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+
+    // Gibt die Typen fuer Vites `?raw`-Importe. Die GLSL-Quellen werden so als
+    // Text geladen - kein Shader-Plugin noetig.
+    "types": ["vite/client"],
+
+    // Streng. Ein System, das monatelang unbeaufsichtigt laeuft, soll seine
+    // Fehler zur Uebersetzungszeit zeigen und nicht in Woche fuenf.
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["src", "vite.config.ts"]
+}

@@ -1,0 +1,389 @@
+# =============================================================================
+# params.yaml — die einzige Konfigurationsdatei des Projekts
+# =============================================================================
+#
+# Regel: Es gibt keinen Zahlenwert im Shader, im Detektor oder im Mapping, der
+# nicht aus dieser Datei stammt. Grund ist nicht Ordnungsliebe, sondern die
+# Arbeit selbst: Jeder Parameter muss dokumentiert und begruendet werden, und
+# das geht nur, wenn er genau einen Ort hat.
+#
+# `core` ist die Quelle der Wahrheit. `sim` holt diese Datei beim Start ueber
+# GET /config als JSON. Die Konfiguration existiert also wirklich nur einmal.
+#
+# Reproduzierbarkeit: run.seed + diese Datei + der Wetter-Rohlog rekonstruieren
+# einen Lauf vollstaendig. Ein Hash dieser Datei wird bei jedem Lauf und in
+# jedem Snapshot mitgeschrieben.
+#
+# Schlüssel und Bezeichner englisch, Kommentare deutsch (Projektkonvention).
+# =============================================================================
+
+
+# --- Lauf -------------------------------------------------------------------
+run:
+  # Startwert fuer jeden Zufallsprozess: Rauschen im Shader, Mutation, Stub-Audio.
+  # Gleicher Seed + gleiche Config + gleicher Wetterlog = gleicher Lauf.
+  seed: 20260901
+  # Freier Name, taucht in Metriken, Snapshots und Health-Log auf. Dient dazu,
+  # spaetere Parameterstudien auseinanderzuhalten.
+  name: "prototype-0"
+
+
+# --- Simulation: Takt und Aufloesung ----------------------------------------
+sim:
+  grid:
+    # Feldaufloesung. 512x512 ist der Kompromiss zwischen sichtbarer Struktur
+    # und Rechenlast auf integrierter Grafik.
+    # ANNAHME: Traegt auf der Ziel-APU. Erster Meilenstein mit Abbruchrelevanz
+    # (Expose 7.4, Risiko 3). Rueckfallebene laut Risiko 2: groeberes Gitter bei
+    # halbiertem Zeitschritt.
+    width: 512
+    height: 512
+
+  # Simulationsschritte pro Sekunde Wanduhrzeit. Bewusst deutlich unter der
+  # Bildrate: Im Dauerbetrieb wird oefter gezeichnet als gerechnet. Die
+  # Entkopplung ist Voraussetzung dafuer, dass die Bildrate gesenkt werden kann,
+  # ohne die Dynamik zu veraendern.
+  tick_hz: 10.0
+
+  # Simulierte Sekunden pro Simulationsschritt bei rate = 1.0 und speed = 1.0.
+  dt_base: 1.0
+
+  # Zeitraffer. Betriebsgroesse, KEINE siebte Kopplung. Im Feldbetrieb 1.0.
+  # Hauptgegenmassnahme gegen Risiko 1: sechs simulierte Wochen in wenigen
+  # Stunden pruefbar, lange bevor das Objekt gebaut ist.
+  # Wirksamer Zeitschritt: dt_eff = dt_base * coupling.rate * sim.speed
+  # Erlaubter Bereich 1..100 (Expose Zeitplan Monat 2: 10-50-fach).
+  speed: 1.0
+
+  # Abstand der Massen-Readbacks von der GPU in Sekunden Wanduhrzeit. Entspricht
+  # dem Metrikintervall im Vertrag. Niedrige Frequenz, weil ein Readback die
+  # Pipeline synchronisiert; die Massenbilanz selbst wird jeden Tick gerechnet.
+  readback_interval_s: 5.0
+
+
+# --- Felder: Naehrstoff -----------------------------------------------------
+# Operatoren ausschliesslich etabliert (Expose 7.3): Laplace-Diffusion, Zerfall.
+field:
+  nutrient:
+    # Laplace-Diffusion. Bestimmt, wie weit sich ein Naehrstoffeintrag ausbreitet,
+    # bevor er aufgenommen wird. Stabilitaetsgrenze beachten: Bei explizitem
+    # Euler-Schritt muss diffusion_rate * dt_eff < 0.25 bleiben.
+    diffusion_rate: 0.20
+    # Zerfall geloester Naehrstoffe pro simulierter Sekunde. Verhindert, dass
+    # sich in unbewachsenen Zonen unbegrenzt Vorrat ansammelt.
+    decay_rate: 0.0005
+    # Anteil abgestorbener Biomasse, der pro Schritt ins Naehrstofffeld
+    # zurueckgeht. 1.0 = intern verlustfreier Kreislauf (Expose 6.2).
+    # Kleiner als 1.0 waere ein Leck und wuerde die Massenbilanz brechen.
+    remineralization_rate: 1.0
+    # Garantierter Mindestnaehrstoff ("Refugium", Risiko 1). Verhindert, dass
+    # eine Flaeche vollstaendig und dauerhaft tot faellt. Jeder Eingriff dieser
+    # Art wird protokolliert und in der Arbeit ausgewiesen.
+    refuge_floor: 0.01
+
+  producer:
+    # Maximale Wachstumsrate pro simulierter Sekunde bei Licht- und
+    # Naehrstoffsaettigung.
+    growth_rate: 0.05
+    # Michaelis-Menten-Halbsaettigung: Lichtwert, bei dem das Wachstum die
+    # Haelfte des Maximums erreicht. Bestimmt, wie stark bewoelkte Tage bremsen.
+    light_half_saturation: 0.35
+    # Dasselbe fuer den Naehrstoff. Bestimmt, wie schnell eine Zone leergezehrt
+    # wird und wie eng Wachstum an den Niederschlag gekoppelt ist.
+    nutrient_half_saturation: 0.25
+    # Sterberate pro simulierter Sekunde. Zusammen mit growth_rate legt sie die
+    # Umschlagzeit der Biomasse fest - die Zeitskala, auf der das Bild atmet.
+    death_rate: 0.012
+    # Harte Obergrenze der lokalen Dichte (Risiko 1: Populationsexplosion).
+    max_density: 1.0
+
+
+# --- Stroemungsfeld ---------------------------------------------------------
+flow:
+  # Ortsfrequenz des Curl-Noise. Klein = grosse, ruhige Wirbel; gross = feine
+  # Unruhe. Wesentlich fuer den Eindruck von Langsamkeit.
+  curl_noise_scale: 3.0
+  # Amplitude des Curl-Noise-Anteils der Stroemung.
+  curl_noise_strength: 0.35
+  # Daempfung pro Schritt bei semi-lagrangescher Advektion. 1.0 = keine
+  # Daempfung. Werte unter 1.0 verlieren Masse und muessen in der Bilanz als
+  # Austrag gefuehrt werden - daher hier bewusst 1.0.
+  advection_dissipation: 1.0
+  # Umrechnung des normierten Windwerts in Advektionsgeschwindigkeit
+  # (Gitterzellen pro simulierter Sekunde) bei wind.speed = 1.0.
+  base_current_gain: 0.8
+
+
+# --- Massenbilanz -----------------------------------------------------------
+# Die Bilanz ist gleichzeitig Stabilitaetsmetrik (TF2) und Nachweis, dass der
+# Kreislauf haelt (Expose 6.2, Risiko 2).
+mass:
+  # Langsamer Austrag, der dem Niederschlagseintrag gegenuebersteht. Ohne ihn
+  # waechst die Gesamtmasse monoton. Anteil pro simulierter Sekunde.
+  sedimentation_rate: 0.00008
+  # Korridor, in dem die Gesamtmasse schwingen soll (relativ zur Startmasse).
+  corridor_min: 0.70
+  corridor_max: 1.40
+  # Toleranz fuer den Bilanz-Residualsaldo in Prozent:
+  #   residual = total(t) - total(0) - Summe(Eintrag) + Summe(Austrag)
+  # Geprueft wird der Residualsaldo, nicht die Konstanz der Gesamtmasse:
+  # Niederschlag traegt ein, Sedimentation traegt aus, die Summe darf sich also
+  # veraendern - was nicht passieren darf, ist unerklaerte Masse.
+  drift_tolerance_pct: 2.0
+
+
+# --- Kopplung: sechs Eingangsgroessen, sechs Angriffspunkte ------------------
+# ZENTRALE ENTWURFSREGEL (Expose 6.3): Jede Eingangsgroesse greift an genau
+# einer Stelle an, keine ueberlappt. Grund ist Zuschreibbarkeit, nicht
+# Sparsamkeit. Diese Datei darf niemals einen siebten Block bekommen, und kein
+# Angriffspunkt darf zweimal vorkommen. Nachweis: docs/mapping.md.
+#
+# Die Abbildung geschieht in `core` (Python), nicht im Shader: Das Mapping IST
+# der Beitrag der Arbeit und muss testbar und begruendbar bleiben.
+coupling:
+
+  # -- Klimakanal, Zeitkonstante Stunden --
+
+  light:
+    # Angriffspunkt: Lichtenergie L fuer das Wachstum der Produzenten.
+    source: shortwave_radiation          # W/m^2, Open-Meteo
+    # Sonnenstand UND Bewoelkung stecken bereits gemeinsam in dieser einen
+    # Groesse: shortwave_radiation ist die tatsaechliche Globalstrahlung, also
+    # geometrisch und durch Wolken gedaempft. Das Expose fasst beide bewusst zu
+    # einer Groesse L zusammen (6.3). cloud_cover zusaetzlich heranzuziehen
+    # waere Doppelzaehlung und ein zweiter Eingang auf denselben Angriffspunkt.
+    input_min: 0.0
+    input_max: 900.0                     # klarer Sommertag Mitteleuropa
+    output_min: 0.0
+    output_max: 1.0
+    curve: linear
+    # Glaettung des Uebergangs zwischen Stundenwerten. Haelt den Kanal traege.
+    smoothing_minutes: 30.0
+
+  nutrient_input:
+    # Angriffspunkt: Eintrag in das Naehrstofffeld.
+    source: precipitation                # mm/h, Open-Meteo
+    input_min: 0.0
+    input_max: 10.0                       # kraeftiger Landregen
+    output_min: 0.0
+    output_max: 1.0
+    # Wurzelkennlinie: Niederschlagsintensitaet ist stark rechtsschief; linear
+    # abgebildet blieben normale Regenfaelle nahezu unsichtbar.
+    curve: sqrt
+    smoothing_minutes: 20.0
+
+  rate:
+    # Angriffspunkt: globale Prozessgeschwindigkeit (Zeitschritt).
+    source: temperature_2m               # Grad Celsius, Open-Meteo
+    # Q10-Kennlinie: Stoffwechselraten verdoppeln sich je 10 K. Etablierte,
+    # lehrbuchuebliche Beziehung - kein selbst hergeleitetes Modell (Expose 7.3).
+    curve: q10
+    q10: 2.0
+    reference_temp_c: 15.0
+    # Harte Klammern. Verhindern, dass ein Kaeltesturz das Bild einfriert oder
+    # ein Hitzetag die Numerik ueber die Stabilitaetsgrenze treibt.
+    output_min: 0.4
+    output_max: 1.8
+    smoothing_minutes: 60.0
+
+  wind:
+    # Angriffspunkt: Grundstroemung des Stroemungsfelds.
+    source_direction: wind_direction_10m  # Grad, meteorologische Konvention
+    source_speed: wind_speed_10m          # km/h, Open-Meteo
+    input_min: 0.0
+    input_max: 40.0                       # frischer Wind
+    output_min: 0.0
+    output_max: 1.0
+    curve: linear
+    # Traegste Glaettung aller vier Klimagroessen: Eine Richtungsaenderung soll
+    # das Bild ueber Stunden drehen, nicht in Minuten.
+    smoothing_minutes: 90.0
+
+  # -- Ereigniskanal, Zeitkonstante Sekunden --
+  # Die drei Groessenordnungen Abstand zum Klimakanal sind die zu pruefende
+  # Kernannahme von TF1 (Expose 6.3) - sichtbar am Verhaeltnis
+  # smoothing_minutes (30..90 min) zu decay_seconds (2..4 s).
+
+  pulse_low:
+    # Angriffspunkt: Impuls in das Stroemungsfeld (lokale Wirbel).
+    source: audio_band_low
+    # Verstaerkung des normierten Pegels auf die Wirbelstaerke.
+    gain: 1.0
+    # Radius des Impulses in Gitterzellen.
+    radius_cells: 40.0
+    # Abklingzeit des Impulses. Kurz genug, um als Ereignis lesbar zu bleiben.
+    decay_seconds: 4.0
+    # Mindestpegel, unter dem nichts ausgeloest wird. Verhindert, dass
+    # Raumgrundrauschen das Bild dauerhaft in Bewegung haelt.
+    threshold: 0.15
+
+  pulse_high:
+    # Angriffspunkt: punktuelle Naehrstoffpartikel.
+    source: audio_band_high
+    gain: 1.0
+    # Menge Naehrstoff je ausgeloestem Partikel.
+    amount: 0.25
+    radius_cells: 6.0
+    decay_seconds: 2.0
+    threshold: 0.20
+
+
+# --- Umweltdienst (Klimakanal) ----------------------------------------------
+environment:
+  # ANNAHME: Standort Nuernberg. Der Betriebsstandort ist der Wohnraum des
+  # jeweiligen Studienhaushalts und je Durchgang anzupassen.
+  latitude: 49.4521
+  longitude: 11.0767
+  timezone: "Europe/Berlin"
+
+  base_url: "https://api.open-meteo.com/v1/forecast"
+  # Open-Meteo benoetigt keinen API-Schluessel. Bedarf laut Expose 3.5:
+  # 24 Aufrufe taeglich gegen ein Freikontingent von 10.000.
+  poll_interval_min: 60
+  # Timeout eines einzelnen Abrufs in Sekunden.
+  request_timeout_s: 15.0
+
+  # Genau die Groessen, die die vier Klimakopplungen brauchen - keine auf Vorrat.
+  hourly_variables:
+    - shortwave_radiation
+    - precipitation
+    - temperature_2m
+    - wind_speed_10m
+    - wind_direction_10m
+  # Einheiten explizit gesetzt, nicht auf Defaults verlassen: Der Wetterlog muss
+  # in fuenf Jahren noch eindeutig lesbar sein.
+  wind_speed_unit: "kmh"
+  temperature_unit: "celsius"
+  precipitation_unit: "mm"
+
+  # Lokaler Cache (Risiko 8). Bei Ausfall werden die letzten bekannten Werte
+  # fortgeschrieben; der Ausfall bleibt unsichtbar, wird aber protokolliert.
+  cache_days: 30
+  # Nach so vielen Stunden ohne frische Daten gilt der Dienst als ausgefallen
+  # und der Zustand wandert ins Health-Log.
+  stale_after_hours: 3.0
+
+
+# --- Audiodienst (Ereigniskanal) --------------------------------------------
+# In Prototyp 0 nur als Stub hinter dem endgueltigen Interface. Es werden
+# ausschliesslich Pegel gewonnen, nie Inhalt; nichts wird gespeichert
+# (Expose 5 und 7.5).
+audio:
+  # stub = synthetische Pulse ueber den Testendpunkt. Spaeter: microphone.
+  source: "stub"
+  band_low_hz: [20.0, 250.0]
+  band_high_hz: [4000.0, 16000.0]
+  # Zeitkonstante der Huellkurve in Millisekunden.
+  envelope_attack_ms: 10.0
+  envelope_release_ms: 300.0
+  # Fenster der laufenden Normalisierung. Macht den Kanal unabhaengig von der
+  # absoluten Zimmerlautstaerke.
+  normalization_window_s: 60.0
+  # Mindestabstand zwischen zwei Pulsen derselben Bandbreite.
+  min_pulse_interval_s: 1.0
+
+
+# --- Metrikspeicher ---------------------------------------------------------
+metrics:
+  db_path: "data/metrics.sqlite"
+  # Wetter-ROHdaten, nicht die interpolierten Werte: Ohne sie ist ein Lauf
+  # nicht rekonstruierbar.
+  weather_log_path: "data/weather_raw.jsonl"
+  # Aufbewahrung der Metrikzeitreihe. Sechs Wochen Feldstudie plus Reserve.
+  retention_days: 120
+
+
+# --- Regeldetektor ----------------------------------------------------------
+# Reines Python, Schwellenwerte auf Zeitreihen, deterministisch und testbar.
+# Kein Sprachmodell (Expose 6.4). In Prototyp 0 genau eine Regel.
+detector:
+  bloom:
+    # Fenster W des gleitenden Medians, in Messpunkten statt in Minuten.
+    # ANNAHME: Bewusst in Stichproben, damit der Detektor im Zeitraffer
+    # dieselbe Statistik sieht wie im Feldbetrieb. Bei speed = 100 entspraechen
+    # 60 Wanduhr-Minuten sehr unterschiedlich viel simulierter Zeit; eine
+    # Fensterdefinition in Wanduhrzeit waere nicht geschwindigkeitsinvariant.
+    # 720 Punkte * 5 s = 1 h Wanduhrzeit bei speed = 1.
+    window_samples: 720
+    # Ausloesung bei Biomasse > gleitender Median + k * MAD.
+    k_mad: 4.0
+    # Vor so vielen Punkten ist die Statistik nicht belastbar - kein Ereignis.
+    min_samples: 120
+    # Sperrzeit nach einer Ausloesung, ebenfalls in Messpunkten. Verhindert,
+    # dass eine einzige Bluete als Dutzend Ereignisse in der Chronik landet.
+    refractory_samples: 360
+
+
+# --- Chronikpipeline --------------------------------------------------------
+# Das Sprachmodell steht ausserhalb der Welt und beschreibt sie. Es erkennt
+# keine Ereignisse, es entscheidet nichts, und es schreibt nie in den
+# Simulationszustand (Expose 3.4 und 6.4).
+chronicle:
+  # single = ein Modellaufruf ohne Framework (Pflicht-Rueckfallebene).
+  # crew    = CrewAI Flow mit den Agenten chronicler und verifier.
+  # Umschaltbar ohne Codeaenderung. Grund: zwei Agenten sind zwei Aufrufe pro
+  # Eintrag; auf der Ziel-APU kann das zu langsam werden. Die Chronik ist
+  # Pflichtumfang, CrewAI nicht.
+  backend: "single"
+
+  # Sprache der erzeugten Eintraege. Die Haushalte der Feldstudie lesen sie,
+  # und sie sind Gegenstand von TF3.
+  language: "de"
+
+  # Lokaler, OpenAI-kompatibler Endpunkt. Kein Cloud-Dienst auf diesem Pfad,
+  # kein Netzverkehr nach aussen (Expose 5 und 7.5).
+  base_url: "http://localhost:1234/v1"
+  # ANNAHME: Platzhalter. Exakter Modellname aus LM Studio ist einzutragen.
+  model: "qwen2.5-7b-instruct"
+  # LM Studio prueft den Schluessel nicht, der Client verlangt aber einen Wert.
+  api_key: "lm-studio"
+  # Niedrig: Der Eintrag soll die Zahlen wiedergeben, nicht ausschmuecken.
+  temperature: 0.3
+  max_tokens: 220
+  # Grosszuegig - Eintraege entstehen asynchron und selten, Latenz ist auf
+  # diesem Pfad unkritisch (Expose 7.4).
+  timeout_s: 180.0
+
+  # Dritter Agent fuer Register und Laenge. Standardmaessig aus.
+  editor_enabled: false
+
+  # Mindestabstand zwischen zwei Eintraegen in Minuten Wanduhrzeit. Zweite
+  # Bremse neben der Refraktaerzeit des Detektors.
+  min_interval_minutes: 20.0
+
+
+# --- Zustandssicherung ------------------------------------------------------
+# Kernanforderung, kein Komfortmerkmal: Bei einem System, dessen ganzer Sinn
+# die Geschichte ist, darf ein Absturz keine Wochen Verlauf vernichten
+# (Expose 7.4).
+snapshot:
+  interval_minutes: 15.0
+  directory: "data/snapshots"
+  # Anzahl aufbewahrter Snapshots (rollierend).
+  keep_last: 8
+
+
+# --- Health-Log -------------------------------------------------------------
+health:
+  path: "data/health.jsonl"
+  interval_s: 60.0
+
+
+# --- Server -----------------------------------------------------------------
+server:
+  host: "127.0.0.1"
+  port: 8000
+  ws_path: "/ws"
+
+
+# =============================================================================
+# BEWUSST NICHT IN DIESER DATEI: ein Abschnitt `interaction:`.
+#
+# Die Form, in der Bewohner mit dem Objekt in Kontakt treten - Sprache (A),
+# Anwesenheitserkennung (B) oder beides (C) - ist laut Expose 6.5 ausdruecklich
+# offen und wird erst am Ende von Monat 1 dokumentiert entschieden.
+#
+# Ein Konfigurationsfeld, ein Modul oder eine Schnittstelle dafuer wuerde die
+# Entscheidung stillschweigend vorwegnehmen. Auch das Entwickler-Overlay aus
+# Prototyp 0 ist keine Interaktionsform, sondern ein Diagnosewerkzeug.
+# =============================================================================

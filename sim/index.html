@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ökosystem im Bilderrahmen</title>
+    <style>
+      /* Kein Look-Development. Diese Regeln halten nur die Fläche frei und
+         verhindern Bildlauf im Kioskbetrieb. Farbgebung und Darstellung sind
+         ausdrücklich nicht Teil von Prototyp 0. */
+      html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+      canvas { display: block; width: 100%; height: 100%; }
+    </style>
+  </head>
+  <body>
+    <!-- Zeichenfläche der Simulation. Der WebGL2-Kontext wird ab Phase 2
+         hierauf erzeugt. -->
+    <canvas id="sim-canvas"></canvas>
+
+    <!-- Entwickler-Overlay: Chronikeinträge, Massenbilanz, Bildzeit und die
+         Attribution. Ausdrücklich ein Diagnosewerkzeug und KEINE
+         Interaktionsform - jene Entscheidung ist laut Exposé 6.5 offen und
+         fällt erst am Ende von Monat 1. Inhalt folgt in Phase 2. -->
+    <aside id="dev-overlay" hidden></aside>
+
+    <!-- Phase 0: Gerüst und Vertrag. Es gibt noch keinen Einstiegspunkt.
+         Phase 2 ergänzt hier:
+         <script type="module" src="/src/main.ts"></script> -->
+  </body>
+</html>
