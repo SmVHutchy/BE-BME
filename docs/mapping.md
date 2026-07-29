@@ -68,23 +68,35 @@ Gestaltungsbeitrag der Arbeit auf — beide Kanaele verschmelzen dann zu einem.
 
 ## Der Sonderfall Zeitschritt
 
-Auf den Zeitschritt wirken **zwei** Faktoren:
+Auf den Zeitschritt wirkt **genau ein** Faktor, und das ist wichtiger, als es
+zunaechst aussieht:
 
 ```
-dt_eff = sim.dt_base * coupling.rate * sim.speed
+dt_eff              = sim.dt_base * coupling.rate      <- speed kommt NICHT vor
+Ticks je Wanduhr-s  = sim.tick_hz * sim.speed
 ```
 
-Das sieht auf den ersten Blick wie ein Verstoss gegen die 1:1-Regel aus. Es ist
-keiner, und die Unterscheidung gehoert festgehalten, weil sie sonst bei jeder
-Durchsicht neu diskutiert wird:
-
-- **`rate`** ist eine echte Kopplung. Sie stammt aus der Temperatur, ist Zeile 3
-  der Tabelle und wirkt im Feldbetrieb.
+- **`rate`** ist die echte Kopplung. Sie stammt aus der Temperatur, ist Zeile 3
+  der Tabelle und wirkt im Feldbetrieb auf den Zeitschritt.
 - **`sim.speed`** ist der Zeitraffer — eine **Betriebsgroesse**, keine
   Umweltkopplung. Sie hat keine Quelle in der Umgebung des Objekts, sondern wird
   vom Entwickler gesetzt, um sechs simulierte Wochen in wenigen Stunden zu
-  pruefen (Hauptgegenmassnahme gegen Risiko 1). Im Feldbetrieb steht sie
-  konstant auf `1.0`.
+  pruefen (Hauptgegenmassnahme gegen Risiko 1). Sie vervielfacht die **Taktrate**
+  und laesst den Zeitschritt unberuehrt. Im Feldbetrieb steht sie auf `1.0`.
+
+**Warum der Zeitraffer nicht ueber den Zeitschritt laufen darf.** Zwei Gruende,
+und der zweite wiegt schwerer:
+
+1. *Numerik.* Der explizite Euler-Schritt der Diffusion verlangt
+   `diffusion_coefficient * dt_eff < 0.25`. Bei `speed = 100` im Zeitschritt
+   waere diese Grenze um das Hundertfache verletzt; die Simulation wuerde
+   binnen weniger Ticks divergieren.
+2. *Aussagekraft.* Vervielfacht `speed` die Taktrate, durchlaeuft ein
+   Zeitrafferlauf **exakt dieselbe Tick-Folge** wie ein Echtzeitlauf und ist bei
+   gleichem Seed bitgleich — nur eben schneller in Wanduhrzeit. Ueber den
+   Zeitschritt skaliert waere er eine *andere* Welt mit anderer Numerik und
+   anderem Verlauf. Als Pruefinstrument gegen Risiko 1 waere er damit wertlos,
+   weil er nicht mehr das zeigt, was im Feldbetrieb passieren wird.
 
 Damit die Unterscheidung nachpruefbar bleibt und nicht nur behauptet ist, wird
 `sim.speed` in jedem Health-Log-Eintrag und in jedem Snapshot mitgeschrieben.

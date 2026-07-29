@@ -66,20 +66,20 @@ class SimConfig(BaseModel):
 
 class NutrientFieldConfig(BaseModel):
     model_config = _STRICT
-    diffusion_rate: float = Field(ge=0.0)
-    decay_rate: float = Field(ge=0.0)
+    diffusion_coefficient: float = Field(ge=0.0)
     # 1.0 = intern verlustfreier Kreislauf. Kleiner waere ein Leck und wuerde
     # die Massenbilanz brechen (Expose 6.2).
     remineralization_rate: float = Field(ge=0.0, le=1.0)
     refuge_floor: float = Field(ge=0.0)
+    input_per_day_at_max: float = Field(ge=0.0)
 
 
 class ProducerFieldConfig(BaseModel):
     model_config = _STRICT
-    growth_rate: float = Field(ge=0.0)
+    doubling_time_hours: float = Field(gt=0.0)
     light_half_saturation: float = Field(gt=0.0)
     nutrient_half_saturation: float = Field(gt=0.0)
-    death_rate: float = Field(ge=0.0)
+    lifetime_hours: float = Field(gt=0.0)
     max_density: float = Field(gt=0.0)
 
 
@@ -87,6 +87,14 @@ class FieldConfig(BaseModel):
     model_config = _STRICT
     nutrient: NutrientFieldConfig
     producer: ProducerFieldConfig
+
+
+class InitConfig(BaseModel):
+    model_config = _STRICT
+    nutrient_level: float = Field(ge=0.0)
+    producer_level: float = Field(ge=0.0)
+    producer_patch_scale: float = Field(gt=0.0)
+    producer_patch_threshold: float = Field(ge=0.0, le=1.0)
 
 
 class FlowConfig(BaseModel):
@@ -99,7 +107,7 @@ class FlowConfig(BaseModel):
 
 class MassConfig(BaseModel):
     model_config = _STRICT
-    sedimentation_rate: float = Field(ge=0.0)
+    sedimentation_half_life_days: float = Field(gt=0.0)
     corridor_min: float = Field(gt=0.0)
     corridor_max: float = Field(gt=0.0)
     drift_tolerance_pct: float = Field(gt=0.0)
@@ -279,6 +287,7 @@ class ServerConfig(BaseModel):
     host: str
     port: int = Field(gt=0, lt=65536)
     ws_path: str
+    allowed_origins: list[str] = Field(min_length=1)
 
 
 # --- Wurzel -----------------------------------------------------------------
@@ -295,6 +304,7 @@ class Config(BaseModel):
     run: RunConfig
     sim: SimConfig
     field: FieldConfig
+    init: InitConfig
     flow: FlowConfig
     mass: MassConfig
     coupling: CouplingConfig

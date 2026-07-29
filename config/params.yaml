@@ -39,19 +39,43 @@ sim:
     width: 512
     height: 512
 
-  # Simulationsschritte pro Sekunde Wanduhrzeit. Bewusst deutlich unter der
-  # Bildrate: Im Dauerbetrieb wird oefter gezeichnet als gerechnet. Die
-  # Entkopplung ist Voraussetzung dafuer, dass die Bildrate gesenkt werden kann,
-  # ohne die Dynamik zu veraendern.
+  # Simulationsschritte pro Sekunde Wanduhrzeit bei speed = 1. Bewusst deutlich
+  # unter der Bildrate: Im Dauerbetrieb wird oefter gezeichnet als gerechnet.
+  # Die Entkopplung ist Voraussetzung dafuer, dass die Bildrate gesenkt werden
+  # kann, ohne die Dynamik zu veraendern (Rueckfallebene Risiko 3).
   tick_hz: 10.0
 
-  # Simulierte Sekunden pro Simulationsschritt bei rate = 1.0 und speed = 1.0.
-  dt_base: 1.0
+  # Weltsekunden je Simulationsschritt bei rate = 1.0.
+  #
+  # Der Wert folgt aus zwei Vorgaben: Sechs simulierte Wochen (3.628.800
+  # Weltsekunden) sollen bei speed = 100 in unter zwei Stunden durchlaufen.
+  #   0,7 * 10 Ticks/s * 100 = 700 Weltsekunden je Wanduhrsekunde
+  #   3.628.800 / 700 = 5184 s = 1,44 h  ->  Vorgabe erfuellt
+  # Im Feldbetrieb (speed = 1) laeuft die Welt entsprechend siebenfach schneller
+  # als die Wanduhr.
+  #
+  # STABILITAET: Der explizite Euler-Schritt der Diffusion verlangt
+  #   field.nutrient.diffusion_coefficient * dt_base * coupling.rate.output_max < 0.25
+  #   0,15 * 0,7 * 1,8 = 0,189                                          -> haelt
+  # Wer dt_base, die Diffusion oder die obere Rate-Klammer anhebt, muss diese
+  # Ungleichung neu pruefen. `sim` prueft sie beim Start und bricht sonst ab.
+  dt_base: 0.7
 
   # Zeitraffer. Betriebsgroesse, KEINE siebte Kopplung. Im Feldbetrieb 1.0.
   # Hauptgegenmassnahme gegen Risiko 1: sechs simulierte Wochen in wenigen
   # Stunden pruefbar, lange bevor das Objekt gebaut ist.
-  # Wirksamer Zeitschritt: dt_eff = dt_base * coupling.rate * sim.speed
+  #
+  # WICHTIG - speed vervielfacht die TAKTRATE, nicht den Zeitschritt:
+  #   Ticks je Wanduhrsekunde = tick_hz * speed
+  #   dt_eff                  = dt_base * coupling.rate      (speed kommt NICHT vor)
+  #
+  # Zwei Gruende. Erstens Numerik: speed im Zeitschritt wuerde die
+  # Stabilitaetsgrenze oben um den Faktor 100 verletzen. Zweitens, und
+  # wichtiger, Aussagekraft: So durchlaeuft ein Zeitrafferlauf exakt dieselbe
+  # Tick-Folge wie ein Echtzeitlauf und ist bitgleich. Ueber den Zeitschritt
+  # skaliert waere der Zeitraffer eine ANDERE Welt - und als Pruefinstrument
+  # gegen Risiko 1 damit wertlos.
+  #
   # Erlaubter Bereich 1..100 (Expose Zeitplan Monat 2: 10-50-fach).
   speed: 1.0
 
@@ -63,39 +87,73 @@ sim:
 
 # --- Felder: Naehrstoff -----------------------------------------------------
 # Operatoren ausschliesslich etabliert (Expose 7.3): Laplace-Diffusion, Zerfall.
+# Die Zeitkonstanten stehen bewusst als Stunden und Tage in der Config und nicht
+# als Raten je Weltsekunde. Zwei Gruende: Ein Wert wie "Lebensdauer 26 Stunden"
+# ist in der Arbeit begruendbar, "death_rate 1.07e-5" nicht - und ein
+# Zehnerfehler faellt sofort auf. Die Umrechnung in Raten geschieht an einer
+# Stelle, in sim/src/sim/params.ts.
 field:
   nutrient:
-    # Laplace-Diffusion. Bestimmt, wie weit sich ein Naehrstoffeintrag ausbreitet,
-    # bevor er aufgenommen wird. Stabilitaetsgrenze beachten: Bei explizitem
-    # Euler-Schritt muss diffusion_rate * dt_eff < 0.25 bleiben.
-    diffusion_rate: 0.20
-    # Zerfall geloester Naehrstoffe pro simulierter Sekunde. Verhindert, dass
-    # sich in unbewachsenen Zonen unbegrenzt Vorrat ansammelt.
-    decay_rate: 0.0005
+    # Laplace-Diffusion in Zellen^2 je Weltsekunde. Bestimmt, wie weit sich ein
+    # Naehrstoffeintrag ausbreitet, bevor er aufgenommen wird.
+    # STABILITAET: diffusion_coefficient * dt_base * coupling.rate.output_max
+    # muss unter 0.25 bleiben (siehe sim.dt_base). 0,15 * 0,7 * 1,8 = 0,189.
+    # `sim` prueft das beim Start und bricht ab, statt still zu divergieren.
+    diffusion_coefficient: 0.15
     # Anteil abgestorbener Biomasse, der pro Schritt ins Naehrstofffeld
     # zurueckgeht. 1.0 = intern verlustfreier Kreislauf (Expose 6.2).
     # Kleiner als 1.0 waere ein Leck und wuerde die Massenbilanz brechen.
     remineralization_rate: 1.0
     # Garantierter Mindestnaehrstoff ("Refugium", Risiko 1). Verhindert, dass
-    # eine Flaeche vollstaendig und dauerhaft tot faellt. Jeder Eingriff dieser
-    # Art wird protokolliert und in der Arbeit ausgewiesen.
+    # eine Flaeche vollstaendig und dauerhaft tot faellt. Der Eingriff wird als
+    # Eintrag bilanziert, nicht stillschweigend zugegeben - sonst waere er
+    # unerklaerte Masse und die Bilanz wuerde ihn zu Recht anzeigen.
     refuge_floor: 0.01
 
+    # Naehrstoff, der bei env.nutrient_input = 1.0 je Zelle und Welttag
+    # eingetragen wird. Das ist der Umrechnungsfaktor von der dimensionslosen
+    # Kopplungsgroesse in tatsaechliche Masse und damit die Amplitude von
+    # Kopplung 2 (TF1).
+    # Groessenordnung: Bei einem Startvorrat von 0,40 und einer
+    # Sedimentations-Halbwertszeit von 90 Tagen traegt die Sedimentation rund
+    # 0,003 je Zelle und Tag aus. Der Eintrag liegt bei typischem Wetter in
+    # derselben Groessenordnung, damit die Gesamtmasse im Korridor schwingt
+    # statt davonzulaufen.
+    input_per_day_at_max: 0.035
+
   producer:
-    # Maximale Wachstumsrate pro simulierter Sekunde bei Licht- und
-    # Naehrstoffsaettigung.
-    growth_rate: 0.05
+    # Verdopplungszeit bei Licht- und Naehrstoffsaettigung. Zusammen mit
+    # lifetime_hours legt sie fest, wie schnell das Bild atmet: Wachstum
+    # deutlich schneller als Sterben, sonst kommt keine Bluete zustande - nicht
+    # zu viel schneller, sonst kippt es in Dauerexplosion.
+    doubling_time_hours: 9.0
     # Michaelis-Menten-Halbsaettigung: Lichtwert, bei dem das Wachstum die
     # Haelfte des Maximums erreicht. Bestimmt, wie stark bewoelkte Tage bremsen.
     light_half_saturation: 0.35
     # Dasselbe fuer den Naehrstoff. Bestimmt, wie schnell eine Zone leergezehrt
     # wird und wie eng Wachstum an den Niederschlag gekoppelt ist.
     nutrient_half_saturation: 0.25
-    # Sterberate pro simulierter Sekunde. Zusammen mit growth_rate legt sie die
-    # Umschlagzeit der Biomasse fest - die Zeitskala, auf der das Bild atmet.
-    death_rate: 0.012
+    # Mittlere Lebensdauer der Biomasse - die Zeitskala, auf der sich das Bild
+    # sichtbar umschichtet. Rund ein Welttag.
+    lifetime_hours: 26.0
     # Harte Obergrenze der lokalen Dichte (Risiko 1: Populationsexplosion).
     max_density: 1.0
+
+
+# --- Startzustand -----------------------------------------------------------
+# Nur wirksam, wenn kein Snapshot wiederhergestellt wird. Das Muster entsteht
+# hash-basiert aus run.seed - derselbe Seed ergibt denselben Startzustand.
+init:
+  # Gleichmaessiger Naehrstoffvorrat zu Beginn.
+  nutrient_level: 0.40
+  # Biomasse innerhalb der Startflecken.
+  producer_level: 0.06
+  # Ortsfrequenz der Startflecken. Klein = wenige grosse Inseln, gross = viele
+  # kleine. Bewusst wenige grosse: Das System soll seine Struktur selbst
+  # entwickeln, nicht von einem feinen Startmuster vorgezeichnet bekommen.
+  producer_patch_scale: 4.0
+  # Ab welchem Rauschwert ein Fleck gesetzt wird. Hoeher = weniger Startflaeche.
+  producer_patch_threshold: 0.55
 
 
 # --- Stroemungsfeld ---------------------------------------------------------
@@ -118,9 +176,16 @@ flow:
 # Die Bilanz ist gleichzeitig Stabilitaetsmetrik (TF2) und Nachweis, dass der
 # Kreislauf haelt (Expose 6.2, Risiko 2).
 mass:
-  # Langsamer Austrag, der dem Niederschlagseintrag gegenuebersteht. Ohne ihn
-  # waechst die Gesamtmasse monoton. Anteil pro simulierter Sekunde.
-  sedimentation_rate: 0.00008
+  # Der einzige Austrag des Systems. Steht dem Niederschlagseintrag gegenueber;
+  # ohne ihn waechst die Gesamtmasse monoton. Als Halbwertszeit angegeben: So
+  # lange braeuchte das Naehrstofffeld ohne jeden Eintrag, um sich zu halbieren.
+  # Sehr viel laenger als alle biologischen Zeitkonstanten - der Austrag soll
+  # die Gesamtmasse ueber Wochen fuehren, nicht das Bild praegen.
+  #
+  # Dies ist zugleich der "Zerfall" des Naehrstofffelds aus Expose 6.2. Beides
+  # getrennt zu fuehren waere derselbe Vorgang doppelt: Geloester Naehrstoff,
+  # der zerfaellt, ist genau der, der dem Kreislauf entzogen wird.
+  sedimentation_half_life_days: 90.0
   # Korridor, in dem die Gesamtmasse schwingen soll (relativ zur Startmasse).
   corridor_min: 0.70
   corridor_max: 1.40
@@ -427,6 +492,21 @@ server:
   host: "127.0.0.1"
   port: 8000
   ws_path: "/ws"
+
+  # Herkuenfte, denen der Browser GET /config und GET /chronicle erlauben darf.
+  # `sim` laeuft als eigener Prozess auf einem anderen Port und ist damit
+  # cross-origin; ohne diesen Eintrag blockiert der Browser den Abruf, und die
+  # Simulation startet nicht.
+  #
+  # Bewusst eine Liste konkreter Herkuenfte und kein Platzhalter "*": Auf dem
+  # fertigen Objekt steht das Geraet im Wohnraum eines Studienhaushalts, und
+  # eine offene Freigabe waere dort nicht zu rechtfertigen.
+  #   5173 = Vite im Entwicklungsbetrieb, 4173 = Vite-Vorschau
+  allowed_origins:
+    - "http://localhost:5173"
+    - "http://127.0.0.1:5173"
+    - "http://localhost:4173"
+    - "http://127.0.0.1:4173"
 
 
 # =============================================================================

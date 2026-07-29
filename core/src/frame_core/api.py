@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 
 import httpx
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from frame_core.audio.stub import StubPulseSource
@@ -312,6 +313,17 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Oekosystem im Bilderrahmen - core", lifespan=lifespan)
+
+# `sim` laeuft als eigener Prozess auf einem anderen Port und ist damit
+# cross-origin. Die erlaubten Herkuenfte stehen als konkrete Liste in
+# params.yaml, nicht als Platzhalter: Auf dem fertigen Objekt steht das Geraet
+# im Wohnraum eines Studienhaushalts.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=load_config().values.server.allowed_origins,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
+)
 
 
 @app.websocket("/ws")

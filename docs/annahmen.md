@@ -273,6 +273,77 @@ Umsetzungskapitel.
 
 ---
 
+## A11 — Der Zeitraffer laesst das Wetter stehen (offener Entwurfsfehler)
+
+**Ort:** `core/src/frame_core/environment/service.py`, `sim/src/main.ts`
+
+**Gemessen am 30.07.2026:** In einem Zeitrafferlauf ueber 931.250 Ticks
+(13,6 Welttage in 64 Sekunden Wanduhrzeit) ist die Produzentenbiomasse von 5739
+auf **null** gefallen. Das System ist vollstaendig ausgestorben.
+
+**Die Ursache ist kein Fehler in der Simulation, sondern in der Kopplung.**
+`core` bildet das Wetter auf die **Wanduhrzeit** ab: Es interpoliert die
+Stundenwerte auf *jetzt* und schickt alle 30 Sekunden einen neuen `env`-Satz.
+`sim` dagegen laeuft im Zeitraffer mit bis zu hundertfacher Taktrate. Waehrend
+in der Welt dreizehn Tage vergehen, vergeht draussen eine Minute - und der
+Lichtwert bleibt der, der zum Startzeitpunkt galt. Der Lauf begann um 23 Uhr.
+Die Welt hatte also dreizehn Tage lang **Nacht**, die Produzenten konnten nicht
+photosynthetisieren und sind verhungert.
+
+**Warum das ernst ist.** Der Zeitraffer ist im Exposé die Hauptgegenmassnahme
+gegen Risiko 1 ("Die Simulation kippt im Langzeitbetrieb"). Er soll pruefen, ob
+das System sechs Wochen uebersteht. Solange in diesen sechs Wochen die Sonne
+nicht aufgeht, prueft er das Gegenteil von dem, was er pruefen soll - und liefert
+ein garantiertes Aussterben, das mit dem Feldbetrieb nichts zu tun hat.
+
+**Aufloesung, zu entscheiden.** Der Klimakanal muss der **Weltzeit** folgen, nicht
+der Wanduhrzeit. Naheliegend ist, historische Stundenwerte von Open-Meteo
+abzurufen (der Archivdienst liefert sie) und sie im Zeitraffer entsprechend
+beschleunigt abzuspielen. Das deckt sich mit Risiko 8, wo fuer den Ausfallfall
+ohnehin "synthetisches Wetter aus historischen Daten" vorgesehen ist, und es
+macht einen Zeitrafferlauf zusaetzlich aus dem Wetterlog reproduzierbar.
+
+---
+
+## A12 — Massendrift der semi-lagrangeschen Advektion
+
+**Ort:** `sim/src/shaders/advect.frag`
+
+**Gemessen am 30.07.2026** im selben Lauf. Der Residualsaldo verlaeuft nicht
+monoton:
+
+| Tick | Welttage | Biomasse | Residuum |
+|---|---|---|---|
+| 10.144 | 0,15 | 3520 | −0,97 % |
+| 350.750 | 5,1 | 29 | **−2,34 %** |
+| 630.960 | 9,2 | 1 | −1,38 % |
+| 931.250 | 13,6 | 0 | −0,46 % |
+
+Die Drift erreicht ihren Hoechstwert, **solange das System lebt**, und faellt
+danach wieder - ein totes Feld hat keine steilen Gradienten mehr, an denen die
+bilineare Interpolation Masse verliert. Der Spitzenwert von 2,34 % liegt ueber
+der Toleranz von `mass.drift_tolerance_pct`.
+
+**Begruendung der Ursache.** Semi-lagrangesche Advektion ist masseerhaltend nur
+im Grenzfall verschwindender Schrittweite; die bilineare Ruecksampelung glaettet
+und verliert dabei Masse an steilen Uebergaengen. Das ist ein bekanntes und
+dokumentiertes Verhalten des Operators, kein Umsetzungsfehler.
+
+**Aufloesung, zu entscheiden.** Das Exposé sieht in Risiko 2 zwei Wege vor:
+masseerhaltende Advektion in Anlehnung an Flow-Lenia, oder "bei Bedarf
+Renormalisierung pro Zeitschritt". Der zweite Weg ist billig - die Reduktion auf
+1x1 laeuft ohnehin jeden Tick, ihr Ergebnis liesse sich im naechsten Schritt als
+Korrekturfaktor lesen, ohne Readback. Wichtig dabei: Die Korrektur muss
+**protokolliert** werden, sonst waere der Residualsaldo per Konstruktion null und
+die Metrik wertlos. Der ausgewiesene Wert waere dann die noetige Korrektur - also
+weiterhin genau das Mass fuer die Drift.
+
+**Zusammenhang mit A11.** Der Spitzenwert wurde in einem Lauf gemessen, der
+aufgrund von A11 unrealistisch war (dauerhafte Nacht, kollabierende Biomasse).
+Die Drift ist erst nach Behebung von A11 belastbar zu beziffern.
+
+---
+
 ## Nicht getroffene Annahmen
 
 Ausdruecklich **offen gelassen** und nicht implizit festgelegt:

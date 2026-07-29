@@ -134,17 +134,20 @@ Die Umrechnung in einen Stroemungsvektor geschieht in `sim`.
 `rate` ist ein Multiplikator auf den Zeitschritt. Der wirksame Zeitschritt ist
 
 ```
-dt_eff = dt_base * rate * speed
-         ^^^^^^^   ^^^^   ^^^^^
-         Config    diese  Config
-                   Nachricht
+dt_eff             = dt_base * rate
+                     ^^^^^^^   ^^^^
+                     Config    diese Nachricht
+
+Ticks je Wanduhr-s = tick_hz * speed        (beides Config)
 ```
 
-Also `params.yaml → sim.dt_base` und `params.yaml → sim.speed` aus der
-Konfiguration, `rate` aus dieser Nachricht.
+Also `params.yaml → sim.dt_base` aus der Konfiguration, `rate` aus dieser
+Nachricht. Der Zeitraffer `params.yaml → sim.speed` vervielfacht die
+**Taktrate** und geht **nicht** in den Zeitschritt ein — sonst waere die
+Stabilitaetsgrenze der Diffusion verletzt und ein Zeitrafferlauf zeigte eine
+andere Welt als der Feldbetrieb (Begruendung in [mapping.md](mapping.md)).
 
-`sim.speed` ist der Zeitraffer und **keine siebte Kopplung**, sondern eine
-Betriebsgroesse (siehe [mapping.md](mapping.md)).
+`sim.speed` ist damit keine siebte Kopplung, sondern eine Betriebsgroesse.
 
 `sim` sendet keine Bestaetigung. Ein neuer `env`-Satz ersetzt den vorigen
 vollstaendig; es gibt keine Teilaktualisierung.
