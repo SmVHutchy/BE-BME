@@ -141,19 +141,95 @@ Rueckfallebene laut Risiko 2: groeberes Gitter bei halbiertem Zeitschritt.
 
 ---
 
-## A8 — Modellname als Platzhalter
+## A8 — Modellgroesse ueber der im Exposé genannten Groessenordnung
 
 **Ort:** `config/params.yaml` → `chronicle.model`
 
-Eingetragen ist `qwen2.5-7b-instruct`.
+Eingetragen ist `google/gemma-4-12b-qat` — Gemma 4 12B QAT, Q4_0-quantisiert,
+GGUF, rund 8,2 GB Speicherbedarf. **Erledigt:** Der Modellname war zunaechst ein
+Platzhalter und ist am 29.07.2026 durch den tatsaechlichen API-Identifier aus
+LM Studio ersetzt worden.
 
-**Begruendung.** LM Studio ist als Endpunkt gesetzt, der HTTP-Server antwortete
-zum Zeitpunkt der Einrichtung aber nicht auf Port 1234 (im Developer-Tab
-vermutlich nicht gestartet), sodass der geladene Modellname nicht ausgelesen
-werden konnte.
+**Was offen bleibt.** Exposé §7.4 setzt das Sprachmodell mit „Groessenordnung
+1–8 Mrd. Parameter" an. 12 Mrd. liegen darueber. Auf der Entwicklungshardware
+(RX 7600 XT, 16 GB VRAM) ist das unproblematisch: 8,2 GB fuer das Modell lassen
+der Simulation reichlich Raum, denn die Felder brauchen bei 512² auch als
+RGBA32F nur wenige Megabyte.
 
-**Aufloesung.** Vor Phase 1: Server starten, `GET /v1/models` abfragen, den
-exakten Namen eintragen. Eine Zeile.
+Die Zielhardware ist aber ein **Mini-PC mit AMD-APU und geteiltem
+Systemspeicher**. Dort konkurrieren Modell und Simulation um denselben Speicher,
+und 8,2 GB sind eine harte Groesse. Genau dieser Fall ist Risiko 3 („Simulation
+und Sprachmodell laufen nicht gemeinsam auf dem Mini-PC"), dessen Rueckfallebenen
+in dieser Reihenfolge greifen: Feldaufloesung reduzieren, Simulationstakt senken,
+**kleineres Sprachmodell**, im aeussersten Fall Chronikgenerierung auf einem
+zweiten Rechner im Heimnetz.
+
+**Aufloesung.** Bei der Verifikation der Zielhardware in Monat 1 mitmessen. Wenn
+12B dort nicht traegt, ist der Wechsel auf ein kleineres Modell eine Zeile in
+dieser Datei — die Chronikpipeline haengt nicht an der Modellgroesse. Die
+schliesslich verwendete Groesse und die Begruendung gehoeren ins
+Umsetzungskapitel.
+
+**Nebenbefund.** Die im Dialog eingestellte Kontextlaenge von 8192 Tokens genuegt
+fuer beide Chronikpfade deutlich: Ein Eintrag bekommt Ereignis, Kennzahlen und
+Wetterlage uebergeben und erzeugt hoechstens `chronicle.max_tokens` Tokens. Auch
+der Crew-Pfad bleibt darunter, weil `verifier` nur den Entwurf und dieselben
+Zahlen sieht.
+
+**Messung am 29.07.2026** gegen `/v1/chat/completions`, RX 7600 XT, Modell
+geladen, Flash Attention aktiv:
+
+| Einstellung | Tokens gesamt | davon Reasoning | Dauer | Ergebnis |
+|---|---|---|---|---|
+| ohne Steuerung | 700 | 697 | 25,6 s | leerer Text |
+| `reasoning_effort: low` | 535 | 473 | 19,4 s | 62 Tokens Text |
+| `enable_thinking: false` | 511 | 446 | 18,6 s | 65 Tokens Text |
+
+Daraus folgt dreierlei. Erstens zaehlen die Reasoning-Tokens gegen `max_tokens`;
+der urspruengliche Wert 220 haette **stillschweigend leere Eintraege** erzeugt.
+Zweitens laesst sich das Reasoning nicht abschalten, nur daempfen. Drittens ist
+die Latenz mit rund 20 s je Aufruf zwar unkritisch bei einem Mindestabstand von
+20 Minuten zwischen Eintraegen, aber deutlich hoeher als die Formulierung in
+Expose 7.4 nahelegt - der Crew-Pfad liegt bei etwa 40 s, auf der Ziel-APU
+entsprechend hoeher.
+
+**Offene Frage fuer Phase 3.** Fuer die Aufgabe "drei nuechterne Saetze aus
+gegebenen Zahlen" ist ein Reasoning-Modell moeglicherweise das falsche Werkzeug;
+der erzeugte Text war eine Wiederholung der Eingabezahlen, keine Prosa. Der
+Vergleich mit einem Nicht-Reasoning-Instruct-Modell gehoert in Phase 3, wenn
+Crew- und Single-Pfad beide stehen und gegeneinander messbar sind.
+
+---
+
+## A10 — Reproduzierbarkeit gilt fuer den Lauf, nicht fuer den Chroniktext
+
+**Ort:** `PLAN.md` (Definition of Done), `docs/contract.md` §7
+
+Die Definition of Done verlangt: "Ein Lauf ist aus Seed, Config und Wetterlog
+reproduzierbar." Das gilt fuer die Simulation, **nicht fuer den Wortlaut der
+Chronikeintraege**.
+
+**Begruendung.** Simulation, Metrikzeitreihe und Detektorausgabe sind
+deterministisch: Bei gleichem Seed, gleicher Config und gleichem Wetterlog
+treten dieselben Ereignisse zu denselben Ticks mit denselben Kennzahlen auf. Die
+**Formulierung** ist es nicht. Kein llama.cpp-Backend garantiert bitgleiche
+Ausgaben ueber Neuladungen hinweg - Batching und nichtdeterministische Kernel
+reichen aus, um bei gleicher Temperatur und gleichem Seed abzuweichen. Bei einem
+Reasoning-Modell kommt die Variabilitaet des Denkpfads hinzu.
+
+**Die tragfaehige Formulierung** trennt deshalb zwei Eigenschaften:
+
+- **Reproduzierbar** sind Lauf, Ereignisse und Kennzahlen.
+- **Ueberpruefbar** ist der Chroniktext - ueber `metrics_ref`, wo genau die
+  Zahlen stehen, die dem Modell uebergeben wurden.
+
+Das ist ohnehin die Abnahmebedingung fuer Phase 3 ("ein Chronikeintrag, dessen
+saemtliche Zahlen sich in der SQLite-Datenbank wiederfinden") und in der
+Verteidigung haltbar. Die urspruengliche Fassung waere es nicht gewesen: Der
+Einwand, dass ein LLM-erzeugter Text nicht reproduzierbar ist, kommt
+vorhersehbar.
+
+**Status.** Vom Verfasser am 29.07.2026 entschieden.
 
 ---
 

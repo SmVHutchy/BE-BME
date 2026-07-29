@@ -148,6 +148,24 @@ nachgerüstet werden. Er ist im Exposé die Hauptgegenmaßnahme gegen Risiko 1.
   Bekannte Stolperstelle: CrewAI hat LiteLLM entfernt — lokale Endpunkte laufen
   über `LLM(..., custom_openai=True, base_url=...)`, nicht über ein
   `openai/`-Präfix.
+
+  Vier Festlegungen, die beim Bau der Crew nicht verhandelbar sind:
+
+  - **Telemetrie aus.** CrewAI sendet standardmäßig anonyme Nutzungsdaten.
+    `CREWAI_DISABLE_TELEMETRY=true` und `OTEL_SDK_DISABLED=true` — sonst liegt
+    Netzverkehr auf dem Chronikpfad (Regel 5).
+  - **`memory=False`, keine `knowledge_sources`.** CrewAI-Memory nutzt ohne
+    eigenen Embedder OpenAIs `text-embedding-3-large`, also einen Cloud-Aufruf.
+    Unabhängig davon würde Memory frühere Einträge einmischen und damit die
+    Garantie brechen, dass ein Eintrag nur die übergebenen Zahlen enthält.
+  - **`Process.sequential`, nicht `hierarchical`.** Hierarchisch fügt einen
+    Manager-LLM und damit einen dritten Modellaufruf hinzu — genau das, wogegen
+    die Rückfallebene existiert.
+  - **Guardrail vor Verifier.** Ob jede Zahl im Text in den übergebenen
+    Kennzahlen vorkommt, prüft eine reine Python-Funktion über `guardrail` und
+    `guardrail_max_retries` — deterministisch und testbar. Der `verifier`
+    beurteilt danach die inhaltlichen Aussagen. Nicht umgekehrt: Was Python
+    mechanisch prüfen kann, wird nicht einem Modell überlassen.
 - **Python:** Projektlokal 3.13 über `uv`. Das systemweite 3.14 ist unbrauchbar,
   weil CrewAI `>=3.10,<3.14` verlangt.
 

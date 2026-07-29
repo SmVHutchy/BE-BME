@@ -26,6 +26,10 @@ dependencies = [
 crew = [
     "crewai>=1.15,<2.0",
 ]
+
+# Entwicklungswerkzeuge als uv-Gruppe: `uv sync` installiert sie mit, ohne dass
+# sie im Wheel landen.
+[dependency-groups]
 dev = [
     "pytest>=8.3",
 ]
@@ -40,6 +44,3 @@ packages = ["src/frame_core"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-
-[tool.uv]
-default-groups = []

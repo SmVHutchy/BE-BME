@@ -188,6 +188,29 @@ der späteren Zielhardware kann das zu langsam werden. **Die Chronik ist im
 Exposé Pflichtumfang, CrewAI nicht.** Das Projekt darf an dieser Stelle nicht
 kippen.
 
+**Zwei Fallen, über Context7 verifiziert:**
+
+- **Telemetrie ist standardmäßig an.** CrewAI sendet anonyme Nutzungsdaten über
+  OpenTelemetry — Netzverkehr auf dem Chronikpfad. `CREWAI_DISABLE_TELEMETRY`
+  und `OTEL_SDK_DISABLED` gehören gesetzt.
+- **`memory=True` ruft die OpenAI-Cloud.** Ohne eigenen Embedder nutzt
+  CrewAI-Memory `text-embedding-3-large`. Memory bleibt aus — es würde außerdem
+  frühere Einträge einmischen und die Garantie brechen, dass ein Eintrag nur die
+  übergebenen Zahlen enthält.
+
+**Zwei Bausteine, die zur Aufgabe passen:** `guardrail` mit
+`guardrail_max_retries` prüft die Ausgabe mit einer reinen Python-Funktion,
+bevor sie angenommen wird — damit fängt Python mechanisch jede Zahl ab, die
+nicht in den Kennzahlen vorkommt, und der `verifier` beurteilt nur noch die
+inhaltlichen Aussagen. `output_pydantic` liefert typisierte statt geparster
+Ausgabe.
+
+**Kein MCP auf dem Chronikpfad.** MCP gibt dem Modell Werkzeuge. Könnte der
+Chronist die Metrikdatenbank selbst abfragen, hielte `metrics_ref` nicht mehr
+fest, was er gesehen hat, und die Abnahmebedingung dieser Phase wäre prinzipiell
+unprüfbar. Der Endpunkt `/v1/chat/completions`, den CrewAI braucht, unterstützt
+ohnehin keine MCPs — die Regel wird vom Transport erzwungen.
+
 **Vor der ersten Zeile CrewAI-Code:** aktuelle API über Context7 holen
 (`resolve-library-id` → `query-docs`). CrewAI ist in der 1.x-Linie unter
 wöchentlicher Release-Kadenz; die Syntax wird nicht aus dem Gedächtnis
@@ -204,7 +227,12 @@ geschrieben.
   der Metrik-Datenbank auffindbar.
 - `chronicle.backend` lässt sich zwischen `crew` und `single` umschalten, beide
   funktionieren.
-- Ein Lauf ist aus Seed, Config und Wetterlog reproduzierbar.
+- **Reproduzierbar** sind Lauf, Ereignisse und Kennzahlen: Gleicher Seed,
+  gleiche Config und gleicher Wetterlog erzeugen dieselben Ereignisse zu
+  denselben Ticks. **Überprüfbar** — nicht reproduzierbar — ist der Chroniktext:
+  Kein lokales LLM-Backend garantiert bitgleiche Ausgaben über Neuladungen.
+  Belegt wird er über `metrics_ref` (siehe [`docs/annahmen.md`](docs/annahmen.md)
+  A10).
 - [`docs/annahmen.md`](docs/annahmen.md) listet jede getroffene Annahme.
 
 ---

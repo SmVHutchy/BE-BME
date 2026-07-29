@@ -332,20 +332,50 @@ chronicle:
 
   # Lokaler, OpenAI-kompatibler Endpunkt. Kein Cloud-Dienst auf diesem Pfad,
   # kein Netzverkehr nach aussen (Expose 5 und 7.5).
+  #
+  # Bewusst `localhost`. Wenn in LM Studio "Serve on Local Network" aktiv ist,
+  # bindet der Server auch an andere Schnittstellen und meldet unter Umstaenden
+  # eine Link-Local-Adresse (169.254.x.x) von einem virtuellen Adapter. Die ist
+  # nicht stabil. `core` laeuft ohnehin auf derselben Maschine.
+  #
+  # Der OpenAI-kompatible Pfad /v1/chat/completions unterstuetzt laut LM Studio
+  # keine MCPs. Das ist hier erwuenscht: Der Chronist bekommt keine Werkzeuge,
+  # sondern ausschliesslich die uebergebenen Zahlen (Expose 6.4).
   base_url: "http://localhost:1234/v1"
-  # ANNAHME: Platzhalter. Exakter Modellname aus LM Studio ist einzutragen.
-  model: "qwen2.5-7b-instruct"
+  # API-Identifier aus LM Studio. Gemma 4 12B QAT, Q4_0-quantisiert, GGUF -
+  # rund 8,2 GB im Speicher. Quantisiert und lokal ausgefuehrt wie in Expose 7.4
+  # vorgesehen; die dort genannte Groessenordnung 1-8 Mrd. Parameter wird
+  # ueberschritten, siehe docs/annahmen.md A8.
+  model: "google/gemma-4-12b-qat"
   # LM Studio prueft den Schluessel nicht, der Client verlangt aber einen Wert.
   api_key: "lm-studio"
   # Niedrig: Der Eintrag soll die Zahlen wiedergeben, nicht ausschmuecken.
   temperature: 0.3
-  max_tokens: 220
+
+  # ACHTUNG, gemessen am 29.07.2026: Gemma 4 ist ein Reasoning-Modell und
+  # verbraucht 446-697 Tokens fuers Denken, BEVOR ein Zeichen Antwort entsteht.
+  # Die Reasoning-Tokens zaehlen gegen max_tokens. Bei 220 kam ein leerer String
+  # zurueck - ohne Fehlermeldung. Der Wert muss also das Denkbudget und den
+  # eigentlichen Eintrag zusammen abdecken.
+  max_tokens: 900
+
+  # Senkt das Reasoning-Budget, wo das Modell den Parameter kennt (gemessen:
+  # 697 -> 473 Tokens). Abschalten laesst es sich nicht. Wird durchgereicht und
+  # von Modellen ohne Reasoning ignoriert.
+  reasoning_effort: "low"
+
   # Grosszuegig - Eintraege entstehen asynchron und selten, Latenz ist auf
-  # diesem Pfad unkritisch (Expose 7.4).
+  # diesem Pfad unkritisch (Expose 7.4). Gemessen: 19-25 s je Aufruf auf einer
+  # RX 7600 XT. Der Wert deckt zusaetzlich das Nachladen ab, falls LM Studio das
+  # Modell nach seiner Leerlaufzeit entladen hat.
   timeout_s: 180.0
 
   # Dritter Agent fuer Register und Laenge. Standardmaessig aus.
   editor_enabled: false
+
+  # Nur Crew-Pfad (Phase 3): Wie oft ein Entwurf hoechstens neu angefordert
+  # wird, wenn das Guardrail eine nicht belegte Zahl im Text findet.
+  guardrail_max_retries: 2
 
   # Mindestabstand zwischen zwei Eintraegen in Minuten Wanduhrzeit. Zweite
   # Bremse neben der Refraktaerzeit des Detektors.
