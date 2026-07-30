@@ -168,6 +168,12 @@ nachgerüstet werden. Er ist im Exposé die Hauptgegenmaßnahme gegen Risiko 1.
     mechanisch prüfen kann, wird nicht einem Modell überlassen.
 - **Python:** Projektlokal 3.13 über `uv`. Das systemweite 3.14 ist unbrauchbar,
   weil CrewAI `>=3.10,<3.14` verlangt.
+- **Neue Skills oder Plugins:** nicht ohne den Prüfmaßstab in
+  [`docs/werkzeuge.md`](docs/werkzeuge.md). Ein Skill ist Anweisungstext, den
+  der Agent befolgt — in einem Repo mit sieben nicht verhandelbaren Regeln ist
+  ein fremder Satz wie „nutze Subagenten" oder „ergänze Telemetrie" ein echter
+  Angriffspunkt, kein theoretischer. Dort steht auch, welche Skills bereits
+  vorhanden sind.
 
 ---
 
