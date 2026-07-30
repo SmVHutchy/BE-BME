@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
@@ -56,9 +57,10 @@ class SimConfig(BaseModel):
     grid: GridConfig
     tick_hz: float = Field(gt=0.0)
     dt_base: float = Field(gt=0.0)
-    # Zeitraffer. Betriebsgroesse, keine Kopplung. Die Grenzen stammen aus dem
-    # Expose (Zeitplan Monat 2: 10-50-fach, Prototyp 0 erlaubt 1-100).
-    speed: float = Field(ge=1.0, le=100.0)
+    # Zeitraffer. Betriebsgroesse, keine Kopplung. Obergrenze 1000, weil mit
+    # dt_base = 0.1 (Echtzeit bei speed = 1) sechs Wochen erst ab etwa 500-fach
+    # in zwei Stunden durchlaufen - siehe params.yaml und annahmen.md A11.
+    speed: float = Field(ge=1.0, le=1000.0)
     readback_interval_s: float = Field(gt=0.0)
 
 
@@ -205,6 +207,10 @@ class EnvironmentConfig(BaseModel):
     longitude: float = Field(ge=-180.0, le=180.0)
     timezone: str
     base_url: str
+    archive_base_url: str
+    # Realer Zeitpunkt, der Weltzeit 0 entspricht. None = Laufbeginn.
+    # Wetterzeit = epoch + Weltzeit (docs/annahmen.md A11).
+    epoch: datetime | None = None
     poll_interval_min: int = Field(gt=0)
     request_timeout_s: float = Field(gt=0.0)
     hourly_variables: list[str] = Field(min_length=1)

@@ -50,9 +50,20 @@ class MetricsMessage(BaseModel):
     model_config = _LENIENT
 
     t: str
-    """Zeitstempel ISO-8601 mit Zeitzone."""
+    """Zeitstempel ISO-8601 mit Zeitzone (Wanduhr)."""
     tick: int = Field(ge=0)
     """Zaehlt Simulationsschritte, nicht Bilder."""
+    world_time: float = Field(ge=0.0, default=0.0)
+    """Verstrichene Weltsekunden seit Beginn des Laufs.
+
+    Erweiterung gegenueber der urspruenglichen Vertragsvorgabe
+    (docs/annahmen.md A11). Ohne sie kann `core` das Wetter nicht auf die
+    Weltzeit abbilden, sondern nur auf die Wanduhrzeit - und ein Zeitrafferlauf
+    bleibt in ewiger Nacht stehen, weil draussen eine Minute vergeht, waehrend
+    in der Welt zwei Wochen vergehen.
+
+    Nicht aus `tick` ableitbar: Der Zeitschritt haengt ueber `env.rate` von der
+    Temperatur ab und ist damit ueber den Lauf nicht konstant."""
     mass: MassMetrics
     # In Prototyp 0 konstant 1 - Vererbung kommt erst in Prototyp 1.
     lineages: int = Field(ge=0, default=1)

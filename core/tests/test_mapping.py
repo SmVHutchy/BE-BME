@@ -87,10 +87,35 @@ def test_q10_ist_bei_referenztemperatur_neutral(app_config):
     assert map_rate(rate.reference_temp_c, rate) == pytest.approx(1.0)
 
 
-def test_q10_verdoppelt_je_zehn_kelvin(app_config):
+def test_q10_aendert_sich_je_zehn_kelvin_um_den_faktor_q10(app_config):
     rate = app_config.values.coupling.rate
-    # 10 K unter der Referenz: halbe Geschwindigkeit (liegt noch im Klammerbereich)
-    assert map_rate(rate.reference_temp_c - 10.0, rate) == pytest.approx(0.5)
+    # 10 K unter der Referenz: um genau den Faktor q10 langsamer.
+    assert map_rate(rate.reference_temp_c - 10.0, rate) == pytest.approx(1.0 / rate.q10)
+    # 10 K darueber: um q10 schneller (sofern noch im Klammerbereich).
+    assert map_rate(rate.reference_temp_c + 10.0, rate) == pytest.approx(rate.q10)
+
+
+def test_q10_bleibt_ueber_die_jahresspanne_des_standorts_wirksam(app_config):
+    """Der Grund, warum q10 nicht auf dem Lehrbuchwert 2,0 steht.
+
+    Gemessen an echtem Archivwetter sattigte die Kennlinie mit q10 = 2,0 in
+    15 von 24 Stichproben eines Junitages an der Obergrenze - die Kopplung
+    lieferte also ueberwiegend eine Konstante und war fuer den Betrachter nicht
+    mehr zuschreibbar. Genau das soll die 1:1-Regel aus Expose 6.3 verhindern.
+
+    Geprueft wird deshalb, dass die Kennlinie ueber die Jahresspanne des
+    Standorts hinweg ueberhaupt Information traegt.
+    """
+    rate = app_config.values.coupling.rate
+    # Nuernberg in Extremjahren, grob.
+    spanne = [float(t) for t in range(-20, 38)]
+    werte = [map_rate(t, rate) for t in spanne]
+
+    geklammert = sum(1 for w in werte
+                     if w in (pytest.approx(rate.output_min), pytest.approx(rate.output_max)))
+    assert geklammert / len(werte) < 0.2, (
+        f"{geklammert} von {len(werte)} Temperaturen der Jahresspanne liegen auf "
+        f"einer Klammer - die Temperaturkopplung waere dort wirkungslos.")
 
 
 @pytest.mark.parametrize("temperature_c", [-20.0, -10.0, 0.0])

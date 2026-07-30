@@ -273,7 +273,7 @@ Umsetzungskapitel.
 
 ---
 
-## A11 — Der Zeitraffer laesst das Wetter stehen (offener Entwurfsfehler)
+## A11 — Der Zeitraffer liess das Wetter stehen (BEHOBEN am 30.07.2026)
 
 **Ort:** `core/src/frame_core/environment/service.py`, `sim/src/main.ts`
 
@@ -296,12 +296,51 @@ das System sechs Wochen uebersteht. Solange in diesen sechs Wochen die Sonne
 nicht aufgeht, prueft er das Gegenteil von dem, was er pruefen soll - und liefert
 ein garantiertes Aussterben, das mit dem Feldbetrieb nichts zu tun hat.
 
-**Aufloesung, zu entscheiden.** Der Klimakanal muss der **Weltzeit** folgen, nicht
-der Wanduhrzeit. Naheliegend ist, historische Stundenwerte von Open-Meteo
-abzurufen (der Archivdienst liefert sie) und sie im Zeitraffer entsprechend
-beschleunigt abzuspielen. Das deckt sich mit Risiko 8, wo fuer den Ausfallfall
-ohnehin "synthetisches Wetter aus historischen Daten" vorgesehen ist, und es
-macht einen Zeitrafferlauf zusaetzlich aus dem Wetterlog reproduzierbar.
+**Beim Beheben kam der eigentliche Fehler zum Vorschein.** Er lag tiefer als im
+Zeitraffer: `sim.dt_base` stand auf 0,7, allein damit sechs Wochen bei
+speed = 100 in unter zwei Stunden durchlaufen. Damit vergingen aber **auch im
+Feldbetrieb sieben Weltsekunden je Wanduhrsekunde** - nach einer echten Woche
+waeren in der Welt sieben Wochen vergangen. Der Klimakanal haette das reale
+Wetter also grundsaetzlich nicht tragen koennen, nur langsamer falsch als im
+Zeitraffer. Der Zeitrafferlauf hat einen Fehler sichtbar gemacht, der das
+Zeitmodell insgesamt betraf.
+
+### Die Loesung
+
+**1. Echtzeit im Feldbetrieb.** `dt_base = 0.1` bei `tick_hz = 10` ergibt genau
+eine Weltsekunde je Wanduhrsekunde bei `speed = 1`.
+
+**2. Weltzeit-Nullpunkt.** `environment.epoch` ist der reale Zeitpunkt, der
+Weltzeit 0 entspricht:
+
+```
+Wetterzeit = epoch + Weltzeit
+```
+
+`null` bedeutet Laufbeginn - der Feldbetrieb, in dem Wetterzeit und
+Wirklichkeit zusammenfallen. Ein zurueckliegendes Datum laesst einen
+Zeitrafferlauf **echtes Archivwetter** beschleunigt abspielen. Das deckt sich
+mit Risiko 8 ("synthetisches Wetter aus historischen Daten") und macht einen
+Zeitrafferlauf aus dem Wetterlog reproduzierbar.
+
+**3. `sim` meldet seine Weltzeit** im Feld `world_time` der Metriknachricht.
+Nicht aus `tick` ableitbar, weil der Zeitschritt ueber `env.rate` von der
+Temperatur abhaengt. Erweiterung des Vertrags, siehe docs/contract.md.
+
+**4. Glaettung in Weltzeit.** Die `smoothing_minutes` der Klimakopplungen
+beziehen sich auf das Wettergeschehen und laufen deshalb auf der Weltzeit; im
+Zeitraffer waeren sie sonst um den Zeitrafferfaktor zu traege.
+
+**5. Zeitrafferobergrenze auf 1000.** Mit `dt_base = 0.1` braeuchten sechs
+Wochen bei 100-fach zehn Stunden. Bei 500-fach sind es zwei Stunden bei
+5.000 Ticks/s - gemessen wurden 10.092 Ticks/s. Das Expose nennt in Monat 2
+"10-50-fach", schreibt das aber unter einem anderen Zeitbegriff; massgeblich
+ist "sechs Wochen in wenigen Stunden" aus Risiko 1.
+
+**Nachgewiesen** gegen echtes Archivwetter (Nuernberg, drei Junitage,
+216 Stundenwerte): 15 helle und 9 dunkle Stichproben ueber 72 Welt-Stunden,
+mit Niederschlagsereignissen und drehender Windrichtung. Der Tag-Nacht-Wechsel
+laeuft also ueber die Weltzeit durch - genau das, was zuvor fehlte.
 
 ---
 
@@ -340,7 +379,57 @@ weiterhin genau das Mass fuer die Drift.
 
 **Zusammenhang mit A11.** Der Spitzenwert wurde in einem Lauf gemessen, der
 aufgrund von A11 unrealistisch war (dauerhafte Nacht, kollabierende Biomasse).
-Die Drift ist erst nach Behebung von A11 belastbar zu beziffern.
+Die Drift ist erst nach Behebung von A11 belastbar zu beziffern. **A11 ist seit
+dem 30.07.2026 behoben; die Neumessung steht aus** und ist der naechste
+Schritt.
+
+**Zusammenhang mit dem Look.** Die Dissipation, die hier Masse verliert,
+glaettet genau die feine Struktur, die das Look-Development anstrebt
+(docs/lookdev.md). Masseerhaltende Advektion nach Flow-Lenia loeste beides;
+eine blosse Renormalisierung nur die Bilanz. Das verschiebt die Abwaegung
+deutlich zugunsten der ersten Variante.
+
+---
+
+## A13 — Q10 auf 1,3 statt auf den Lehrbuchwert 2,0
+
+**Ort:** `config/params.yaml` → `coupling.rate`
+
+**Der Befund.** Mit `q10 = 2.0` und Referenz 15 Grad ist die Kennlinie nur
+zwischen +2 und +24 Grad wirksam; darueber und darunter liefert sie die
+Klammerwerte. Gemessen an echtem Archivwetter (Nuernberg, drei Junitage) stand
+die Rate in **15 von 24 Stichproben exakt auf `output_max`** - die
+Temperaturkopplung lieferte also ueberwiegend eine Konstante.
+
+**Warum das ein Problem ist und nicht nur ein Schoenheitsfehler.** Eine
+Eingangsgroesse, die sich nicht aendert, ist fuer den Betrachter nicht
+zuschreibbar. Damit faellt genau die Eigenschaft weg, um derentwillen die
+1:1-Regel aus Expose 6.3 existiert. Schaerfer noch fuer die Feldstudie: Sie
+laeuft Dezember bis Mitte Januar, wo Nuernberg regelmaessig unter den unteren
+Klammerpunkt faellt - die Kopplung waere waehrend des gesamten
+Evaluationszeitraums stumm gewesen, und TF1 haette sie nicht pruefen koennen.
+
+**Die Wahl.** Die Klammern spannen den Faktor 1,8 / 0,4 = 4,5. Damit dieser
+Bereich die Jahresspanne des Standorts abdeckt (rund -20 bis +37 Grad, 57 K):
+
+```
+q10 = 4.5^(10/57) = 1.3
+```
+
+Die Referenz wandert von 15 auf 10 Grad, naeher am Jahresmittel des Standorts,
+damit die neutrale Rate 1,0 dort liegt, wo das Wetter die meiste Zeit ist.
+Ergebnis derselben Messung: **3 von 24 statt 15 von 24** an der Klammer.
+
+**Belastbarkeit.** Q10-Werte um 1,3 bis 1,5 sind fuer Vorgaenge auf
+Oekosystemebene belegt und liegen unter dem oft genannten Bereich 2 bis 3 fuer
+einzelne Enzymreaktionen. Das Expose misst ohnehin an Plausibilitaet im
+Erleben, nicht an biologischer Korrektheit (5). Der Wert ist damit begruendbar,
+gehoert aber als bewusste Abweichung vom Lehrbuchwert ins Umsetzungskapitel -
+mitsamt der Messung, die ihn ausgeloest hat.
+
+**Offen.** Der Wert ist auf Nuernberg gerechnet. Steht das Objekt in einem
+Haushalt mit anderem Klima, ist er neu zu bestimmen. Er haengt also am
+Standort, genau wie `environment.latitude`.
 
 ---
 

@@ -294,6 +294,7 @@ async function main(): Promise<void> {
       client.send({
         t: new Date().toISOString(),
         tick,
+        world_time: worldTime,
         mass: {
           nutrient: totals.nutrient,
           producer: totals.producer,

@@ -74,6 +74,7 @@ Alle 5 Sekunden Wanduhrzeit (`params.yaml → sim.readback_interval_s`).
 |---|---|---|
 | `t` | ISO-8601 mit Zeitzone | Wanduhrzeit der Messung |
 | `tick` | Ganzzahl, monoton | zaehlt Simulationsschritte, nicht Bilder |
+| `world_time` | Sekunden ≥ 0 | verstrichene **Weltzeit**. Erweiterung, siehe unten |
 | `mass.nutrient` | ≥ 0, Feldsumme | geloester Naehrstoff |
 | `mass.producer` | ≥ 0, Feldsumme | Produzentenbiomasse |
 | `mass.consumer` | ≥ 0, Feldsumme | **in Prototyp 0 konstant `0.0`** — Konsumenten kommen erst in Prototyp 1. Das Feld bleibt im Vertrag, damit dieser stabil bleibt. |
@@ -105,6 +106,28 @@ Eintrag ist der Niederschlag, Austrag die Sedimentation (Exposé §6.2).
 > ist bei offenem Eintrag und Austrag das falsche Kriterium.
 
 Toleranz: `params.yaml → mass.drift_tolerance_pct`.
+
+### Weltzeit
+
+> **ANNAHME.** `world_time` ist eine weitere Erweiterung der Vertragsvorgabe
+> (docs/annahmen.md A11). Ohne sie bildet `core` das Wetter auf die
+> **Wanduhrzeit** ab, waehrend `sim` im Zeitraffer voraus laeuft — ein Lauf
+> ueber 13,6 Welttage vergingen draussen 64 Sekunden, die Welt hatte also
+> durchgehend Nacht, und die Produzenten sind verhungert.
+>
+> Aus `tick` ist der Wert **nicht** ableitbar: Der Zeitschritt haengt ueber
+> `env.rate` von der Temperatur ab und ist ueber den Lauf nicht konstant.
+
+`core` bildet daraus die Wetterzeit:
+
+```
+Wetterzeit = params.yaml → environment.epoch  +  world_time
+```
+
+Im Feldbetrieb ist `epoch` der Laufbeginn, und weil bei `speed = 1` eine
+Weltsekunde je Wanduhrsekunde vergeht, faellt die Wetterzeit mit der
+Wirklichkeit zusammen. Ein zurueckliegendes `epoch` laesst einen
+Zeitrafferlauf echtes Archivwetter beschleunigt abspielen.
 
 ---
 

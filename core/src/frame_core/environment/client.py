@@ -10,7 +10,7 @@ Wetterdaten von Open-Meteo.com, lizenziert unter CC BY 4.0.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
@@ -94,22 +94,57 @@ def parse_forecast(payload: dict, variables: list[str]) -> WeatherForecast:
     return WeatherForecast(raw=payload, samples=samples)
 
 
-async def fetch_forecast(config: EnvironmentConfig,
-                         client: httpx.AsyncClient | None = None) -> WeatherForecast:
-    """Ruft die Vorhersage ab. Wirft `OpenMeteoError` bei jedem Fehlschlag."""
+def build_archive_params(config: EnvironmentConfig, start: date, end: date) -> dict[str, str]:
+    """Parameter fuer den Archivdienst.
+
+    Gebraucht, sobald ein Zeitrafferlauf Weltzeiten erreicht, die der
+    Vorhersagedienst nicht abdeckt. Der Archivdienst liefert dieselben
+    Stundengroessen fuer beliebig weit zurueckliegende Zeitraeume - damit spielt
+    ein Zeitrafferlauf echtes Wetter mit Tag, Nacht und Umschwuengen ab, statt
+    in einem eingefrorenen Zustand zu verharren (docs/annahmen.md A11).
+    """
+    return {
+        **{k: v for k, v in build_params(config).items()
+           if k not in ("past_days", "forecast_days")},
+        "start_date": start.isoformat(),
+        "end_date": end.isoformat(),
+    }
+
+
+async def _get_json(url: str, params: dict[str, str], timeout: float,
+                    client: httpx.AsyncClient | None) -> dict:
     owns_client = client is None
-    http = client or httpx.AsyncClient(timeout=config.request_timeout_s)
+    http = client or httpx.AsyncClient(timeout=timeout)
     try:
-        response = await http.get(config.base_url, params=build_params(config))
+        response = await http.get(url, params=params)
         response.raise_for_status()
-        payload = response.json()
+        return response.json()
     except (httpx.HTTPError, ValueError) as exc:
         raise OpenMeteoError(f"Open-Meteo nicht erreichbar: {exc}") from exc
     finally:
         if owns_client:
             await http.aclose()
 
+
+async def fetch_forecast(config: EnvironmentConfig,
+                         client: httpx.AsyncClient | None = None) -> WeatherForecast:
+    """Ruft die Vorhersage ab. Wirft `OpenMeteoError` bei jedem Fehlschlag."""
+    payload = await _get_json(config.base_url, build_params(config),
+                              config.request_timeout_s, client)
     forecast = parse_forecast(payload, config.hourly_variables)
     if not forecast.samples:
         raise OpenMeteoError("Antwort enthielt keine vollstaendigen Stundenwerte")
+    return forecast
+
+
+async def fetch_archive(config: EnvironmentConfig, start: date, end: date,
+                        client: httpx.AsyncClient | None = None) -> WeatherForecast:
+    """Ruft zurueckliegende Stundenwerte ab."""
+    payload = await _get_json(config.archive_base_url,
+                              build_archive_params(config, start, end),
+                              config.request_timeout_s, client)
+    forecast = parse_forecast(payload, config.hourly_variables)
+    if not forecast.samples:
+        raise OpenMeteoError(
+            f"Archiv lieferte keine vollstaendigen Stundenwerte fuer {start} bis {end}")
     return forecast

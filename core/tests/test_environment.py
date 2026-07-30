@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from frame_core.environment.client import WeatherSample, parse_forecast
-from frame_core.environment.service import interpolate_at
+from frame_core.environment.service import EnvironmentService, covers, interpolate_at
 
 BASIS = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
 
@@ -53,6 +53,75 @@ def test_nach_dem_letzten_wert_wird_fortgeschrieben():
 def test_ohne_stundenwerte_wird_nicht_geraten():
     with pytest.raises(ValueError):
         interpolate_at([], BASIS)
+
+
+# --- Weltzeit statt Wanduhrzeit (A11) ---------------------------------------
+
+def test_covers_erkennt_ob_nachgeladen_werden_muss():
+    """Die Bedingung, an der der erste Zeitrafferlauf gescheitert ist.
+
+    Ohne diese Pruefung haette `core` die Stundenwerte des Startzeitpunkts
+    behalten, waehrend die Weltzeit im Zeitraffer daran vorbeigelaufen ist -
+    dreizehn Welttage Dauernacht, Biomasse auf null.
+    """
+    samples = stundenwerte()
+    assert covers(samples, BASIS + timedelta(minutes=30))
+    assert not covers(samples, BASIS + timedelta(days=3))
+    assert not covers(samples, BASIS - timedelta(hours=1))
+    assert not covers([], BASIS)
+
+
+def test_weltzeit_wird_ueber_die_epoche_auf_wetterzeit_abgebildet(app_config):
+    epoche = datetime(2026, 6, 15, tzinfo=UTC)
+    config = app_config.model_copy(update={
+        "values": app_config.values.model_copy(update={
+            "environment": app_config.values.environment.model_copy(update={"epoch": epoche})
+        })
+    })
+    service = EnvironmentService(config)
+
+    assert service.epoch == epoche
+    assert service.weather_time(0.0) == epoche
+    assert service.weather_time(3600.0) == epoche + timedelta(hours=1)
+    # Sechs Wochen Weltzeit landen sechs Wochen nach der Epoche - unabhaengig
+    # davon, wie lange der Lauf in Wanduhrzeit gedauert hat.
+    assert service.weather_time(6 * 7 * 86400.0) == epoche + timedelta(weeks=6)
+
+
+def test_ohne_epoche_gilt_der_laufbeginn(app_config):
+    """Feldbetrieb: Weltzeit 0 ist jetzt, und weil eine Weltsekunde je
+    Wanduhrsekunde vergeht, faellt die Wetterzeit mit der Wirklichkeit
+    zusammen."""
+    assert app_config.values.environment.epoch is None
+    service = EnvironmentService(app_config)
+    abstand = abs((service.epoch - datetime.now(UTC)).total_seconds())
+    assert abstand < 5.0
+
+
+def test_echtzeit_im_feldbetrieb(app_config):
+    """Die Eigenschaft, die A11 zugrunde liegt.
+
+    Bei speed = 1 muss genau eine Weltsekunde je Wanduhrsekunde vergehen.
+    Andernfalls driften Weltzeit und Wirklichkeit auseinander, und der
+    Klimakanal kann das reale Wetter nicht mehr tragen - die Kernpraemisse der
+    Arbeit.
+    """
+    sim = app_config.values.sim
+    weltsekunden_je_wanduhrsekunde = sim.dt_base * sim.tick_hz * 1.0
+    assert weltsekunden_je_wanduhrsekunde == pytest.approx(1.0)
+
+
+def test_stabilitaetsgrenze_der_diffusion_haelt(app_config):
+    """Expliziter Euler-Schritt: diffusion * dt_eff muss unter 0.25 bleiben.
+
+    `sim` prueft das beim Start ebenfalls und bricht ab; hier steht es als
+    Regressionsschutz, damit eine Aenderung an dt_base, der Diffusion oder der
+    oberen Rate-Klammer nicht erst im Browser auffaellt.
+    """
+    values = app_config.values
+    faktor = (values.field.nutrient.diffusion_coefficient
+              * values.sim.dt_base * values.coupling.rate.output_max)
+    assert faktor < 0.25
 
 
 # --- Antwort von Open-Meteo lesen -------------------------------------------

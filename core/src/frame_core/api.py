@@ -1,4 +1,4 @@
-"""FastAPI-Anwendung: WebSocket-Server, Auslieferung, Hintergrundaufgaben.
+﻿"""FastAPI-Anwendung: WebSocket-Server, Auslieferung, Hintergrundaufgaben.
 
 Fuehrt die Dienste zusammen und haelt den Vertrag aus docs/contract.md ein.
 
@@ -71,6 +71,9 @@ class AppState:
     samples_since_event: int | None = None
     """Stichproben seit dem letzten erkannten Ereignis. `None`, solange im Lauf
     noch keines aufgetreten ist."""
+    world_time: float = 0.0
+    """Zuletzt von `sim` gemeldete Weltzeit in Sekunden. Bestimmt, welches
+    Wetter gilt - nicht die Wanduhrzeit (docs/annahmen.md A11)."""
     last_metrics: MetricsMessage | None = None
     last_health: dict = field(default_factory=dict)
     last_env: EnvValues | None = None
@@ -92,13 +95,24 @@ def _state(app: FastAPI) -> AppState:
 # --- Hintergrundaufgaben ----------------------------------------------------
 
 async def environment_poll_loop(state: AppState) -> None:
-    """Holt stuendlich neue Wetterdaten. Ein Fehlschlag beendet nichts."""
+    """Haelt die Stundenwerte passend zur WELTZEIT nach.
+
+    Zwei Ausloeser. Der stuendliche Takt deckt den Feldbetrieb ab, in dem die
+    Weltzeit mit der Wanduhr laeuft. `needs_refresh` deckt den Zeitraffer ab, wo
+    die Weltzeit die geladene Spanne binnen Sekunden durchlaeuft - ohne diese
+    zweite Bedingung bliebe der Lauf im Wetter des Startzeitpunkts stecken, und
+    genau daran ist der erste Zeitrafferlauf gescheitert.
+    """
     interval = state.config.values.environment.poll_interval_min * 60.0
+    elapsed = interval  # beim Start sofort abrufen
     async with httpx.AsyncClient(
             timeout=state.config.values.environment.request_timeout_s) as client:
         while True:
-            await state.environment.refresh(client)
-            await asyncio.sleep(interval)
+            if elapsed >= interval or state.environment.needs_refresh(state.world_time):
+                await state.environment.refresh(state.world_time, client)
+                elapsed = 0.0
+            await asyncio.sleep(1.0)
+            elapsed += 1.0
 
 
 async def environment_push_loop(state: AppState) -> None:
@@ -106,7 +120,7 @@ async def environment_push_loop(state: AppState) -> None:
     interval = state.config.values.environment.push_interval_s
     while True:
         await asyncio.sleep(interval)
-        env = state.environment.current_env()
+        env = state.environment.current_env(state.world_time)
         if env is None:
             continue
         if state.last_env is not None and env == state.last_env:
@@ -133,7 +147,7 @@ async def health_loop(state: AppState) -> None:
             config_hash=state.config.config_hash,
             connections=len(state.connections),
             metrics_rows=state.store.metrics_count(state.run_id),
-            environment=state.environment.status_dict(),
+            environment=state.environment.status_dict(state.world_time),
             **state.last_health,
         )
 
@@ -222,6 +236,9 @@ async def handle_metrics(state: AppState, message: MetricsMessage) -> None:
     """Nimmt eine Metriknachricht an: speichern, bilanzieren, pruefen."""
     state.store.insert_metrics(state.run_id, message)
     state.last_metrics = message
+    # Bestimmt, welches Wetter gilt. Muss vor allem anderen gesetzt werden,
+    # damit Detektor und Chronik dieselbe Weltzeit sehen wie der Klimakanal.
+    state.world_time = message.world_time
 
     if state.samples_since_event is not None:
         state.samples_since_event += 1
@@ -394,7 +411,7 @@ async def get_health() -> dict:
         "connections": len(state.connections),
         "metrics_rows": state.store.metrics_count(state.run_id),
         "restarts": state.health.restart_count,
-        "environment": state.environment.status_dict(),
+        "environment": state.environment.status_dict(state.world_time),
         "chronicle_backend": state.chronicle.name,
         **state.last_health,
     }

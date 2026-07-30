@@ -27,6 +27,15 @@ export interface PulseValues {
 export interface MetricsPayload {
   t: string;
   tick: number;
+  /**
+   * Verstrichene Weltsekunden. Bestimmt in `core`, welches Wetter gilt.
+   *
+   * Nicht aus `tick` ableitbar: Der Zeitschritt haengt ueber `env.rate` von der
+   * Temperatur ab. Ohne diesen Wert bildet `core` das Wetter auf die
+   * Wanduhrzeit ab, und ein Zeitrafferlauf bleibt im Wetter des
+   * Startzeitpunkts stehen (docs/annahmen.md A11).
+   */
+  world_time: number;
   mass: {
     nutrient: number;
     producer: number;

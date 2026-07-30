@@ -1,5 +1,5 @@
-# =============================================================================
-# params.yaml — die einzige Konfigurationsdatei des Projekts
+﻿# =============================================================================
+# params.yaml â€” die einzige Konfigurationsdatei des Projekts
 # =============================================================================
 #
 # Regel: Es gibt keinen Zahlenwert im Shader, im Detektor oder im Mapping, der
@@ -14,7 +14,7 @@
 # einen Lauf vollstaendig. Ein Hash dieser Datei wird bei jedem Lauf und in
 # jedem Snapshot mitgeschrieben.
 #
-# Schlüssel und Bezeichner englisch, Kommentare deutsch (Projektkonvention).
+# SchlÃ¼ssel und Bezeichner englisch, Kommentare deutsch (Projektkonvention).
 # =============================================================================
 
 
@@ -47,19 +47,25 @@ sim:
 
   # Weltsekunden je Simulationsschritt bei rate = 1.0.
   #
-  # Der Wert folgt aus zwei Vorgaben: Sechs simulierte Wochen (3.628.800
-  # Weltsekunden) sollen bei speed = 100 in unter zwei Stunden durchlaufen.
-  #   0,7 * 10 Ticks/s * 100 = 700 Weltsekunden je Wanduhrsekunde
-  #   3.628.800 / 700 = 5184 s = 1,44 h  ->  Vorgabe erfuellt
-  # Im Feldbetrieb (speed = 1) laeuft die Welt entsprechend siebenfach schneller
-  # als die Wanduhr.
+  # DER WERT IST NICHT FREI WAEHLBAR. Er ist so gesetzt, dass im Feldbetrieb
+  # (speed = 1) genau eine Weltsekunde je Wanduhrsekunde vergeht:
+  #   dt_base * tick_hz * speed = 0,1 * 10 * 1 = 1
+  #
+  # Das ist die Voraussetzung dafuer, dass der Klimakanal ueberhaupt das reale
+  # Wetter tragen kann. Laeuft die Welt schneller als die Wirklichkeit, driften
+  # Weltzeit und Wanduhrzeit auseinander, und "das Bild haengt mit draussen
+  # zusammen" wird nach wenigen Tagen falsch - das ist die Kernpraemisse der
+  # Arbeit (docs/annahmen.md A11).
+  #
+  # Frueher stand hier 0,7, gewaehlt allein damit sechs Wochen bei speed = 100
+  # in unter zwei Stunden durchlaufen. Das erfuellte die Vorgabe und brach dabei
+  # still die Echtzeiteigenschaft: Die Welt lief siebenfach zu schnell.
   #
   # STABILITAET: Der explizite Euler-Schritt der Diffusion verlangt
   #   field.nutrient.diffusion_coefficient * dt_base * coupling.rate.output_max < 0.25
-  #   0,15 * 0,7 * 1,8 = 0,189                                          -> haelt
-  # Wer dt_base, die Diffusion oder die obere Rate-Klammer anhebt, muss diese
-  # Ungleichung neu pruefen. `sim` prueft sie beim Start und bricht sonst ab.
-  dt_base: 0.7
+  #   0,15 * 0,1 * 1,8 = 0,027                                -> sehr komfortabel
+  # `sim` prueft die Ungleichung beim Start und bricht ab, statt zu divergieren.
+  dt_base: 0.1
 
   # Zeitraffer. Betriebsgroesse, KEINE siebte Kopplung. Im Feldbetrieb 1.0.
   # Hauptgegenmassnahme gegen Risiko 1: sechs simulierte Wochen in wenigen
@@ -76,7 +82,15 @@ sim:
   # skaliert waere der Zeitraffer eine ANDERE Welt - und als Pruefinstrument
   # gegen Risiko 1 damit wertlos.
   #
-  # Erlaubter Bereich 1..100 (Expose Zeitplan Monat 2: 10-50-fach).
+  # Erlaubter Bereich 1..1000. Das Expose nennt in Monat 2 "10-50-fach", ist dort
+  # aber unter einem anderen Zeitbegriff geschrieben - mit dt_base = 0,1 sind
+  # sechs Wochen bei 50-fach erst nach 20 Stunden durch. Massgeblich ist die
+  # Aussage "sechs Wochen in wenigen Stunden" (Risiko 1):
+  #   speed =  100  ->  10,1 h
+  #   speed =  500  ->   2,0 h      5.000 Ticks/s
+  #   speed = 1000  ->   1,0 h     10.000 Ticks/s
+  # Gemessen wurden 10.092 Ticks/s; 500 traegt mit Reserve, 1000 liegt am Rand.
+  # Abweichung dokumentiert in docs/annahmen.md A11.
   speed: 1.0
 
   # Abstand der Massen-Readbacks von der GPU in Sekunden Wanduhrzeit. Entspricht
@@ -97,7 +111,7 @@ field:
     # Laplace-Diffusion in Zellen^2 je Weltsekunde. Bestimmt, wie weit sich ein
     # Naehrstoffeintrag ausbreitet, bevor er aufgenommen wird.
     # STABILITAET: diffusion_coefficient * dt_base * coupling.rate.output_max
-    # muss unter 0.25 bleiben (siehe sim.dt_base). 0,15 * 0,7 * 1,8 = 0,189.
+    # muss unter 0.25 bleiben (siehe sim.dt_base). 0,15 * 0,1 * 1,8 = 0,027.
     # `sim` prueft das beim Start und bricht ab, statt still zu divergieren.
     diffusion_coefficient: 0.15
     # Anteil abgestorbener Biomasse, der pro Schritt ins Naehrstofffeld
@@ -240,13 +254,38 @@ coupling:
   rate:
     # Angriffspunkt: globale Prozessgeschwindigkeit (Zeitschritt).
     source: temperature_2m               # Grad Celsius, Open-Meteo
-    # Q10-Kennlinie: Stoffwechselraten verdoppeln sich je 10 K. Etablierte,
+    # Q10-Kennlinie: Die Rate aendert sich je 10 K um den Faktor q10. Etablierte,
     # lehrbuchuebliche Beziehung - kein selbst hergeleitetes Modell (Expose 7.3).
     curve: q10
-    q10: 2.0
-    reference_temp_c: 15.0
+
+    # WARUM 1.4 UND NICHT 2.0. Der Lehrbuchwert 2.0 sattigt an diesem Standort
+    # fast durchgehend. Gemessen am 30.07.2026 an echtem Archivwetter (Nuernberg,
+    # drei Junitage): Mit q10 = 2,0 und Referenz 15 Grad stand die Rate in
+    # 15 von 24 Stichproben exakt auf output_max - die Kopplung lieferte also
+    # ueberwiegend eine Konstante und war damit fuer den Betrachter nicht
+    # zuschreibbar. Genau das soll die 1:1-Regel verhindern.
+    #
+    # Rechnung: Die Klammern spannen den Faktor 1,8 / 0,4 = 4,5. Dieser Bereich
+    # soll die volle Jahresspanne am Standort abdecken - Nuernberg reicht in
+    # Extremjahren von rund -20 bis +37 Grad, also 57 K:
+    #     q10 = 4.5^(10/57) = 1.3
+    # Damit bleibt die Kennlinie zwischen -25 und +32 Grad wirksam. Zuvor
+    # (q10 = 2,0, Referenz 15) sattigte sie bereits ab +24 Grad, ein Zwischen-
+    # schritt mit q10 = 1,4 noch ab +28 Grad - beides zu frueh fuer Sommertage.
+    #
+    # Q10-Werte um 1,4 sind fuer Vorgaenge auf Oekosystemebene belegt; das
+    # Expose misst ohnehin an Plausibilitaet im Erleben, nicht an biologischer
+    # Korrektheit (5). Die Wahl gehoert ins Umsetzungskapitel.
+    q10: 1.3
+
+    # Referenz auf das Jahresmittel des Standorts statt auf 15 Grad. Dadurch
+    # liegt die neutrale Rate 1,0 dort, wo das Wetter die meiste Zeit ist, und
+    # die Kennlinie hat nach beiden Seiten Spielraum.
+    reference_temp_c: 10.0
+
     # Harte Klammern. Verhindern, dass ein Kaeltesturz das Bild einfriert oder
     # ein Hitzetag die Numerik ueber die Stabilitaetsgrenze treibt.
+    # Stabilitaetsreserve mit dt_base = 0,1: zulaessig waere bis rund 16.
     output_min: 0.4
     output_max: 1.8
     smoothing_minutes: 60.0
@@ -302,6 +341,27 @@ environment:
   timezone: "Europe/Berlin"
 
   base_url: "https://api.open-meteo.com/v1/forecast"
+  # Archiv fuer zurueckliegende Zeitraeume. Wird gebraucht, sobald ein
+  # Zeitrafferlauf Weltzeiten erreicht, die der Vorhersagedienst nicht abdeckt.
+  archive_base_url: "https://archive-api.open-meteo.com/v1/archive"
+
+  # WELTZEIT-NULLPUNKT: der reale Zeitpunkt, der Weltzeit 0 entspricht.
+  #
+  #   Wetterzeit = epoch + Weltzeit
+  #
+  # `null` = Laufbeginn. Das ist der Feldbetrieb: Weil bei speed = 1 eine
+  # Weltsekunde je Wanduhrsekunde vergeht, faellt die Wetterzeit mit der
+  # Wirklichkeit zusammen, und das Objekt zeigt das Wetter von draussen.
+  #
+  # Ein ISO-Datum setzt den Nullpunkt in die Vergangenheit. Dann spielt ein
+  # Zeitrafferlauf **echtes Archivwetter** beschleunigt ab - mit Tag und Nacht,
+  # Wetterumschwuengen und Jahreszeit. Genau das fehlte, als der erste
+  # Zeitrafferlauf dreizehn Tage Dauernacht erzeugt und das Oekosystem
+  # ausgeloescht hat (docs/annahmen.md A11).
+  #
+  # Beispiel fuer einen Sechs-Wochen-Lauf ab Mitte Juni:
+  #   epoch: "2026-06-15T00:00:00+02:00"
+  epoch: null
   # Open-Meteo benoetigt keinen API-Schluessel. Bedarf laut Expose 3.5:
   # 24 Aufrufe taeglich gegen ein Freikontingent von 10.000.
   poll_interval_min: 60

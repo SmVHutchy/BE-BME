@@ -5,21 +5,33 @@ Der Klimakanal. Vier der sechs Kopplungen entstehen hier
 
 Ablauf je Nachfuehrung:
 
-    Stundenwerte  ->  Interpolation auf jetzt  ->  Kennlinie  ->  Glaettung
-    (Open-Meteo)      (linear zwischen zwei)      (mapping.py)   (Zeitkonstante)
+    Weltzeit -> Wetterzeit -> Interpolation -> Kennlinie -> Glaettung
+                (epoch +)     (zwischen zwei   (mapping.py)  (Zeitkonstante
+                              Stundenwerten)                  in Weltzeit)
+
+**Alles rechnet in Weltzeit, nicht in Wanduhrzeit.** Das ist die Behebung von
+A11: Zuvor bildete dieser Dienst das Wetter auf *jetzt* ab, waehrend `sim` im
+Zeitraffer voraus lief. In einem Lauf ueber 13,6 Welttage vergingen draussen
+64 Sekunden - die Welt hatte also durchgehend Nacht, und die Produzenten sind
+verhungert. Der Zeitraffer prueft damit das Gegenteil dessen, was er soll.
+
+    Wetterzeit = epoch + Weltzeit
+
+Im Feldbetrieb ist `epoch` der Laufbeginn und eine Weltsekunde vergeht je
+Wanduhrsekunde - Wetterzeit und Wirklichkeit fallen zusammen. In einem
+Zeitrafferlauf liegt `epoch` in der Vergangenheit, und der Lauf spielt echtes
+Archivwetter beschleunigt ab.
 
 Bei Netzausfall wird der letzte bekannte Stundenwert fortgeschrieben. Der
-Ausfall bleibt im Bild unsichtbar, wird aber protokolliert - so verlangt es
-Risiko 8. Erst nach `environment.stale_after_hours` gilt der Dienst als
-ausgefallen und der Zustand wandert ins Health-Log.
+Ausfall bleibt im Bild unsichtbar, wird aber protokolliert (Risiko 8).
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
@@ -28,12 +40,18 @@ from frame_core.contract import EnvValues, WindEnv
 from frame_core.environment.client import (
     OpenMeteoError,
     WeatherSample,
+    fetch_archive,
     fetch_forecast,
 )
 from frame_core.environment.mapping import map_climate, map_rate, map_wind, smooth, smooth_angle
 from frame_core.environment.rawlog import WeatherRawLog
 
 logger = logging.getLogger(__name__)
+
+# Ab welchem Abstand zur Gegenwart der Archivdienst statt der Vorhersage
+# gebraucht wird. Die Vorhersage deckt mit past_days=1 und forecast_days=2 rund
+# drei Tage ab; darunter bleibt Reserve fuer einen laufenden Zeitrafferlauf.
+_FORECAST_REACH = timedelta(days=1)
 
 
 def interpolate_at(samples: Sequence[WeatherSample], when: datetime) -> dict[str, float]:
@@ -67,6 +85,15 @@ def interpolate_at(samples: Sequence[WeatherSample], when: datetime) -> dict[str
     return dict(samples[-1].values)
 
 
+def covers(samples: Sequence[WeatherSample], when: datetime) -> bool:
+    """Liegt `when` innerhalb der geladenen Stundenwerte?
+
+    Getrennt von `interpolate_at`, weil dort ausserhalb bewusst fortgeschrieben
+    wird. Hier geht es um die andere Frage: Muessen neue Daten geholt werden?
+    """
+    return bool(samples) and samples[0].time <= when <= samples[-1].time
+
+
 @dataclass
 class _SmoothingState:
     """Geglaettete Werte je Kopplung, mit eigener Zeitkonstante."""
@@ -76,10 +103,10 @@ class _SmoothingState:
     rate: float | None = None
     wind_dir_deg: float | None = None
     wind_speed: float | None = None
-    last_update: datetime | None = None
+    last_world_time: float | None = None
 
     def initialised(self) -> bool:
-        return self.last_update is not None
+        return self.last_world_time is not None
 
 
 @dataclass
@@ -91,25 +118,17 @@ class EnvironmentStatus:
     consecutive_failures: int = 0
     sample_count: int = 0
     failure_reason: str | None = None
+    source: str = "none"
+    """forecast | archive | none - welcher Endpunkt die Daten geliefert hat."""
 
     def is_stale(self, now: datetime, stale_after_hours: float) -> bool:
         if self.last_success is None:
             return True
         return (now - self.last_success).total_seconds() > stale_after_hours * 3600.0
 
-    def as_dict(self, now: datetime, stale_after_hours: float) -> dict:
-        return {
-            "last_success": self.last_success.isoformat() if self.last_success else None,
-            "last_failure": self.last_failure.isoformat() if self.last_failure else None,
-            "consecutive_failures": self.consecutive_failures,
-            "sample_count": self.sample_count,
-            "failure_reason": self.failure_reason,
-            "stale": self.is_stale(now, stale_after_hours),
-        }
-
 
 class EnvironmentService:
-    """Haelt die aktuellen Klimawerte und fuehrt sie nach."""
+    """Haelt die aktuellen Klimawerte und fuehrt sie auf der Weltzeit nach."""
 
     def __init__(self, app_config: AppConfig, rawlog: WeatherRawLog | None = None) -> None:
         self._app = app_config
@@ -120,18 +139,49 @@ class EnvironmentService:
         self._smoothing = _SmoothingState()
         self.status = EnvironmentStatus()
 
+        # Weltzeit 0. Ohne Angabe der Laufbeginn - das ist der Feldbetrieb, in
+        # dem Weltzeit und Wanduhrzeit ohnehin zusammenfallen.
+        self.epoch = self._config.epoch or datetime.now(UTC)
+        if self.epoch.tzinfo is None:
+            # Ein Datum ohne Zeitzone waere mehrdeutig und wuerde die
+            # Reproduzierbarkeit eines Laufs beschaedigen.
+            self.epoch = self.epoch.replace(tzinfo=UTC)
+        logger.info("Klimakanal: Weltzeit 0 entspricht %s", self.epoch.isoformat())
+
     @property
     def samples(self) -> list[WeatherSample]:
         return list(self._samples)
 
-    async def refresh(self, client: httpx.AsyncClient | None = None) -> bool:
-        """Holt neue Stundenwerte. Gibt zurueck, ob der Abruf gelang.
+    def weather_time(self, world_time: float) -> datetime:
+        """Der reale Zeitpunkt, dessen Wetter zur uebergebenen Weltzeit gehoert."""
+        return self.epoch + timedelta(seconds=world_time)
 
-        Ein Fehlschlag wirft nicht: Die Welt laeuft auf den letzten bekannten
-        Werten weiter, und der Ausfall gehoert protokolliert, nicht eskaliert.
+    def needs_refresh(self, world_time: float) -> bool:
+        return not covers(self._samples, self.weather_time(world_time))
+
+    async def refresh(self, world_time: float = 0.0,
+                      client: httpx.AsyncClient | None = None) -> bool:
+        """Holt die Stundenwerte, die zur gegebenen Weltzeit passen.
+
+        Waehlt den Endpunkt nach der Wetterzeit: Was weiter als einen Tag
+        zurueckliegt, kommt aus dem Archiv - der Vorhersagedienst kennt es nicht
+        mehr. Gibt zurueck, ob der Abruf gelang; ein Fehlschlag wirft nicht,
+        sondern laesst die Welt auf den letzten bekannten Werten weiterlaufen.
         """
+        target = self.weather_time(world_time)
+        use_archive = target < datetime.now(UTC) - _FORECAST_REACH
+
         try:
-            forecast = await fetch_forecast(self._config, client)
+            if use_archive:
+                # Grosszuegig um den Zielzeitpunkt herum, damit nicht bei jedem
+                # Nachfuehrschritt neu abgerufen wird.
+                start = (target - timedelta(days=1)).date()
+                end = (target + timedelta(days=7)).date()
+                forecast = await fetch_archive(self._config, start, end, client)
+                source = "archive"
+            else:
+                forecast = await fetch_forecast(self._config, client)
+                source = "forecast"
         except OpenMeteoError as exc:
             self.status.last_failure = datetime.now(UTC)
             self.status.consecutive_failures += 1
@@ -151,22 +201,23 @@ class EnvironmentService:
         self.status.consecutive_failures = 0
         self.status.failure_reason = None
         self.status.sample_count = len(forecast.samples)
-        logger.info("Klimakanal: %d Stundenwerte bis %s",
-                    len(forecast.samples), forecast.covered_until)
+        self.status.source = source
+        logger.info("Klimakanal: %d Stundenwerte aus %s, %s bis %s (Wetterzeit %s)",
+                    len(forecast.samples), source,
+                    forecast.samples[0].time.isoformat(),
+                    forecast.samples[-1].time.isoformat(), target.isoformat())
         return True
 
-    def current_env(self, now: datetime | None = None) -> EnvValues | None:
+    def current_env(self, world_time: float) -> EnvValues | None:
         """Abgebildete und geglaettete Klimawerte fuer den Vertrag.
 
         `None`, solange noch keine Wetterdaten vorliegen - dann wird auch nichts
-        gesendet. `sim` rechnet in diesem Fall mit seinen Vorgabewerten weiter,
-        statt dass hier ein erfundener Wert entsteht.
+        gesendet, statt dass hier ein erfundener Wert entsteht.
         """
         if not self._samples:
             return None
 
-        now = now or datetime.now(UTC)
-        raw = interpolate_at(self._samples, now)
+        raw = interpolate_at(self._samples, self.weather_time(world_time))
 
         light_target = map_climate(raw[self._coupling.light.source], self._coupling.light)
         nutrient_target = map_climate(raw[self._coupling.nutrient_input.source],
@@ -188,7 +239,11 @@ class EnvironmentService:
             state.wind_dir_deg = wind_target.dir_deg
             state.wind_speed = wind_target.speed
         else:
-            dt = (now - state.last_update).total_seconds()
+            # WELTZEIT, nicht Wanduhrzeit. Die Zeitkonstanten der Kopplungen
+            # (smoothing_minutes) beziehen sich auf das Wettergeschehen; im
+            # Zeitraffer muss die Glaettung mit ihm mitlaufen, sonst waere sie
+            # dort um den Zeitrafferfaktor zu traege.
+            dt = max(0.0, world_time - (state.last_world_time or 0.0))
             state.light = smooth(state.light, light_target, dt,
                                  self._coupling.light.smoothing_minutes)
             state.nutrient_input = smooth(state.nutrient_input, nutrient_target, dt,
@@ -199,7 +254,7 @@ class EnvironmentService:
                                               self._coupling.wind.smoothing_minutes)
             state.wind_speed = smooth(state.wind_speed, wind_target.speed, dt,
                                       self._coupling.wind.smoothing_minutes)
-        state.last_update = now
+        state.last_world_time = world_time
 
         return EnvValues(
             light=min(1.0, max(0.0, state.light)),
@@ -209,5 +264,16 @@ class EnvironmentService:
                          speed=min(1.0, max(0.0, state.wind_speed))),
         )
 
-    def status_dict(self, now: datetime | None = None) -> dict:
-        return self.status.as_dict(now or datetime.now(UTC), self._config.stale_after_hours)
+    def status_dict(self, world_time: float = 0.0) -> dict:
+        now = datetime.now(UTC)
+        return {
+            "epoch": self.epoch.isoformat(),
+            "weather_time": self.weather_time(world_time).isoformat(),
+            "source": self.status.source,
+            "last_success": self.status.last_success.isoformat() if self.status.last_success else None,
+            "last_failure": self.status.last_failure.isoformat() if self.status.last_failure else None,
+            "consecutive_failures": self.status.consecutive_failures,
+            "sample_count": self.status.sample_count,
+            "failure_reason": self.status.failure_reason,
+            "stale": self.status.is_stale(now, self._config.stale_after_hours),
+        }
