@@ -48,6 +48,49 @@ def format_numbers(values: dict) -> str:
     return "\n".join(lines)
 
 
+async def call_model(config: ChronicleConfig, messages: list[dict[str, str]],
+                      client: httpx.AsyncClient | None) -> str:
+    """Ein einzelner Aufruf gegen den lokalen OpenAI-kompatiblen Endpunkt.
+
+    Modulweite Funktion statt Methode, damit `TwoStepChronicle` denselben
+    Aufrufmechanismus fuer den `verifier`-Schritt nutzt, ohne ihn zu
+    duplizieren oder auf ein privates Attribut von `SingleChronicle`
+    zuzugreifen. Beide Rollen sprechen mit demselben Modell am selben
+    Endpunkt, nur mit unterschiedlichen Prompts.
+    """
+    payload: dict = {
+        "model": config.model,
+        "messages": messages,
+        "temperature": config.temperature,
+        # Deckt Denkbudget UND Eintrag ab. Ein Reasoning-Modell verbraucht
+        # den groessten Teil davon, bevor ein Zeichen Text entsteht; ein zu
+        # kleiner Wert liefert stillschweigend einen leeren String.
+        "max_tokens": config.max_tokens,
+    }
+    if config.reasoning_effort:
+        payload["reasoning_effort"] = config.reasoning_effort
+    if config.disable_thinking:
+        # Daempft das Reasoning-Budget wirksam (gemessen 2018 statt bis zu
+        # 4000 Tokens). Modelle ohne Reasoning ignorieren den Schluessel.
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
+
+    owns_client = client is None
+    active_client = client or httpx.AsyncClient(timeout=config.timeout_s)
+    try:
+        response = await active_client.post(
+            f"{config.base_url.rstrip('/')}/chat/completions",
+            json=payload,
+            headers={"Authorization": f"Bearer {config.api_key}"},
+        )
+        response.raise_for_status()
+        data = response.json()
+    finally:
+        if owns_client:
+            await active_client.aclose()
+
+    return (data["choices"][0]["message"].get("content") or "").strip()
+
+
 class SingleChronicle:
     """Ein Aufruf, strikter Prompt, numerisches Guardrail mit Wiederholung."""
 
@@ -71,37 +114,7 @@ class SingleChronicle:
                 {"role": "user", "content": user}]
 
     async def _complete(self, messages: list[dict[str, str]]) -> str:
-        payload: dict = {
-            "model": self._config.model,
-            "messages": messages,
-            "temperature": self._config.temperature,
-            # Deckt Denkbudget UND Eintrag ab. Ein Reasoning-Modell verbraucht
-            # den groessten Teil davon, bevor ein Zeichen Text entsteht; ein zu
-            # kleiner Wert liefert stillschweigend einen leeren String.
-            "max_tokens": self._config.max_tokens,
-        }
-        if self._config.reasoning_effort:
-            payload["reasoning_effort"] = self._config.reasoning_effort
-        if self._config.disable_thinking:
-            # Daempft das Reasoning-Budget wirksam (gemessen 2018 statt bis zu
-            # 4000 Tokens). Modelle ohne Reasoning ignorieren den Schluessel.
-            payload["chat_template_kwargs"] = {"enable_thinking": False}
-
-        owns_client = self._client is None
-        client = self._client or httpx.AsyncClient(timeout=self._config.timeout_s)
-        try:
-            response = await client.post(
-                f"{self._config.base_url.rstrip('/')}/chat/completions",
-                json=payload,
-                headers={"Authorization": f"Bearer {self._config.api_key}"},
-            )
-            response.raise_for_status()
-            data = response.json()
-        finally:
-            if owns_client:
-                await client.aclose()
-
-        return (data["choices"][0]["message"].get("content") or "").strip()
+        return await call_model(self._config, messages, self._client)
 
     async def write(self, event: DetectedEvent) -> ChronicleEntry | None:
         """Formuliert einen Eintrag und prueft jede Zahl darin.

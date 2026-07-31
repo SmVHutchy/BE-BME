@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from frame_core.audio.stub import StubPulseSource
 from frame_core.chronicle.base import ChronicleBackend, DetectedEvent
 from frame_core.chronicle.single import SingleChronicle
+from frame_core.chronicle.two_step import TwoStepChronicle
 from frame_core.config import AppConfig, load_config
 from frame_core.contract import EnvValues, MetricsMessage, parse_incoming
 from frame_core.detect.bloom import evaluate_bloom
@@ -42,15 +43,11 @@ def build_chronicle_backend(config: AppConfig,
                             client: httpx.AsyncClient | None = None) -> ChronicleBackend:
     """Waehlt das Backend allein anhand der Konfiguration.
 
-    Der Wechsel zwischen `single` und `crew` ist eine Zeile in params.yaml und
-    erfordert keine Codeaenderung - das ist die geforderte Rueckfallebene.
+    Der Wechsel zwischen `single` und `verified` ist eine Zeile in params.yaml
+    und erfordert keine Codeaenderung - das ist die geforderte Rueckfallebene.
     """
-    if config.values.chronicle.backend == "crew":
-        # Phase 3. Bis dahin ist `single` der einzige gebaute Weg, und ein
-        # stiller Rueckfall waere schlechter als ein deutlicher Hinweis.
-        from frame_core.chronicle.crew import CrewChronicle  # noqa: PLC0415
-
-        return CrewChronicle(config.values.chronicle)
+    if config.values.chronicle.backend == "verified":
+        return TwoStepChronicle(config.values.chronicle, client)
     return SingleChronicle(config.values.chronicle, client)
 
 

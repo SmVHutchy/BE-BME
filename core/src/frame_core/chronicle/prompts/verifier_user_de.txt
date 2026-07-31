@@ -1,0 +1,13 @@
+Entwurf:
+{draft}
+
+Ereignis: {event_type}
+Tick: {tick}
+
+Kennzahlen:
+{metrics}
+
+Wetterlage:
+{weather}
+
+Prüfe den Entwurf und antworte wie vorgegeben.

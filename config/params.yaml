@@ -506,11 +506,17 @@ detector:
 # keine Ereignisse, es entscheidet nichts, und es schreibt nie in den
 # Simulationszustand (Expose 3.4 und 6.4).
 chronicle:
-  # single = ein Modellaufruf ohne Framework (Pflicht-Rueckfallebene).
-  # crew    = CrewAI Flow mit den Agenten chronicler und verifier.
-  # Umschaltbar ohne Codeaenderung. Grund: zwei Agenten sind zwei Aufrufe pro
+  # single   = ein Modellaufruf ohne Framework (Pflicht-Rueckfallebene).
+  # verified = zwei schlichte httpx-Aufrufe nacheinander, ohne Framework: der
+  #            Agent "chronicler" formuliert (wortgleich zu "single"), der
+  #            Agent "verifier" prueft danach jede Aussage des Entwurfs gegen
+  #            dieselben Kennzahlen und korrigiert oder verwirft. Urspruenglich
+  #            war dafuer CrewAI vorgesehen; gestrichen, weil das Expose
+  #            Agenten nur als Abgrenzung nennt (3.4, 5) - die Zwei-Rollen-Idee
+  #            blieb, das Framework fiel weg.
+  # Umschaltbar ohne Codeaenderung. Grund: zwei Rollen sind zwei Aufrufe pro
   # Eintrag; auf der Ziel-APU kann das zu langsam werden. Die Chronik ist
-  # Pflichtumfang, CrewAI nicht.
+  # Pflichtumfang, der zweistufige Weg nicht.
   backend: "single"
 
   # Sprache der erzeugten Eintraege. Die Haushalte der Feldstudie lesen sie,
@@ -576,8 +582,10 @@ chronicle:
   # Dritter Agent fuer Register und Laenge. Standardmaessig aus.
   editor_enabled: false
 
-  # Nur Crew-Pfad (Phase 3): Wie oft ein Entwurf hoechstens neu angefordert
-  # wird, wenn das Guardrail eine nicht belegte Zahl im Text findet.
+  # Wie oft der chronicler-Schritt einen Entwurf hoechstens neu anfordert,
+  # wenn das numerische Guardrail (guard.py) eine nicht belegte Zahl im Text
+  # findet. Gilt fuer beide Backends: Bei "verified" ist der chronicler-Schritt
+  # wortgleich zu "single" und nutzt denselben Wert.
   guardrail_max_retries: 2
 
   # Mindestabstand zwischen zwei Eintraegen in Minuten Wanduhrzeit. Zweite

@@ -3,13 +3,17 @@
 Zwei Implementierungen hinter einem Protokoll, umschaltbar ueber
 `chronicle.backend` in config/params.yaml, ohne Codeaenderung:
 
-    SingleChronicle  ein Modellaufruf, ohne Framework - PFLICHT-RUECKFALLEBENE
-    CrewChronicle    CrewAI Flow mit `chronicler` und `verifier` (Phase 3)
+    SingleChronicle   ein Modellaufruf, ohne Framework - PFLICHT-RUECKFALLEBENE
+    TwoStepChronicle  zwei schlichte httpx-Aufrufe nacheinander: `chronicler`
+                      formuliert, `verifier` prueft jede Aussage gegen die
+                      uebergebenen Zahlen (Phase 3). Kein CrewAI - siehe
+                      chronicle/two_step.py fuer die Begruendung.
 
-Warum die Rueckfallebene Pflicht ist: Zwei Agenten sind zwei Modellaufrufe je
+Warum die Rueckfallebene Pflicht ist: Zwei Rollen sind zwei Modellaufrufe je
 Eintrag. Gemessen wurden 19-25 s je Aufruf auf einer RX 7600 XT; auf der
 Ziel-APU mit geteiltem Speicher entsprechend mehr. Die Chronik ist im Expose
-Pflichtumfang, CrewAI nicht - das Projekt darf an dieser Stelle nicht kippen.
+Pflichtumfang, der zweistufige Weg nicht - das Projekt darf an dieser Stelle
+nicht kippen.
 
 Das Sprachmodell steht ausserhalb der Welt. Es erkennt keine Ereignisse, es
 entscheidet nichts, und es schreibt nie in den Simulationszustand

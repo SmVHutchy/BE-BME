@@ -4,27 +4,19 @@ version = "0.1.0"
 description = "Umweltdienst, Metrikspeicher, Regeldetektor und Chronikpipeline fuer das Oekosystem im Bilderrahmen"
 readme = "../README.md"
 
-# Obergrenze ist nicht willkuerlich: CrewAI 1.x deklariert >=3.10,<3.14 und ist
-# auf Python 3.14 nicht installierbar. Untergrenze 3.13, damit Entwicklungs- und
-# Zielumgebung denselben Interpreter benutzen.
-requires-python = ">=3.13,<3.14"
+# Untergrenze 3.13, damit Entwicklungs- und Zielumgebung denselben Interpreter
+# benutzen. Die fruehere Obergrenze <3.14 kam ausschliesslich von CrewAI 1.x
+# (deklariert >=3.10,<3.14); seit Phase 3 laeuft der zweistufige Chronikpfad
+# (TwoStepChronicle, chronicle/two_step.py) ueber zwei schlichte httpx-Aufrufe
+# statt ueber CrewAI, also entfaellt der Grund fuer die Obergrenze mit ihr.
+requires-python = ">=3.13"
 
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",   # bringt den WebSocket-Unterbau mit
-    "httpx>=0.28",               # Open-Meteo-Abruf, asynchron
+    "httpx>=0.28",               # Open-Meteo-Abruf und Chronikpfad, asynchron
     "pydantic>=2.10",            # Vertragsmodelle aus docs/contract.md
     "pyyaml>=6.0",               # config/params.yaml
-]
-
-[project.optional-dependencies]
-# CrewAI bewusst als Extra, nicht als harte Abhaengigkeit: Die Chronik ist im
-# Expose Pflichtumfang, CrewAI nicht. `SingleChronicle` muss ohne das Framework
-# lauffaehig bleiben - das ist die Rueckfallebene, falls zwei Modellaufrufe pro
-# Eintrag auf der Ziel-APU zu langsam werden.
-# Installation: uv sync --extra crew
-crew = [
-    "crewai>=1.15,<2.0",
 ]
 
 # Entwicklungswerkzeuge als uv-Gruppe: `uv sync` installiert sie mit, ohne dass

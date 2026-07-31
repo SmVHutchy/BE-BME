@@ -142,32 +142,29 @@ nachgerüstet werden. Er ist im Exposé die Hauptgegenmaßnahme gegen Risiko 1.
 
 ## Vor jedem größeren Schritt
 
-- **CrewAI:** Aktuelle API über Context7 holen (`resolve-library-id` →
-  `query-docs`), bevor eine Zeile geschrieben wird. Die 1.x-Linie hat
-  wöchentliche Releases; die Syntax nicht aus dem Gedächtnis schreiben.
-  Bekannte Stolperstelle: CrewAI hat LiteLLM entfernt — lokale Endpunkte laufen
-  über `LLM(..., custom_openai=True, base_url=...)`, nicht über ein
-  `openai/`-Präfix.
+- **Chronikpfad:** Zwei Backends, umschaltbar über `chronicle.backend` in
+  `config/params.yaml`, ohne Codeänderung. `single` ist die
+  Pflicht-Rückfallebene mit einem Modellaufruf, `verified` macht zwei — erst
+  `chronicler`, dann `verifier`.
 
-  Vier Festlegungen, die beim Bau der Crew nicht verhandelbar sind:
+  **Kein CrewAI.** Ursprünglich vorgesehen, dann gestrichen: Das Exposé nennt
+  CrewAI nirgends und erwähnt Agenten nur zweimal, beide Male als Abgrenzung
+  (§3.4 und §5, „kein Multi-Agenten-Dialogsystem"). Die Zwei-Rollen-Idee ist
+  der Wert für die Arbeit, nicht die Bibliothek — zwei schlichte
+  `httpx`-Aufrufe leisten dasselbe. Wer das Framework wieder einführen will,
+  bringt damit auch dessen Telemetrie und dessen Cloud-Embedder zurück, beides
+  auf einem Pfad, der netzfrei sein muss.
 
-  - **Telemetrie aus.** CrewAI sendet standardmäßig anonyme Nutzungsdaten.
-    `CREWAI_DISABLE_TELEMETRY=true` und `OTEL_SDK_DISABLED=true` — sonst liegt
-    Netzverkehr auf dem Chronikpfad (Regel 5).
-  - **`memory=False`, keine `knowledge_sources`.** CrewAI-Memory nutzt ohne
-    eigenen Embedder OpenAIs `text-embedding-3-large`, also einen Cloud-Aufruf.
-    Unabhängig davon würde Memory frühere Einträge einmischen und damit die
-    Garantie brechen, dass ein Eintrag nur die übergebenen Zahlen enthält.
-  - **`Process.sequential`, nicht `hierarchical`.** Hierarchisch fügt einen
-    Manager-LLM und damit einen dritten Modellaufruf hinzu — genau das, wogegen
-    die Rückfallebene existiert.
-  - **Guardrail vor Verifier.** Ob jede Zahl im Text in den übergebenen
-    Kennzahlen vorkommt, prüft eine reine Python-Funktion über `guardrail` und
-    `guardrail_max_retries` — deterministisch und testbar. Der `verifier`
-    beurteilt danach die inhaltlichen Aussagen. Nicht umgekehrt: Was Python
-    mechanisch prüfen kann, wird nicht einem Modell überlassen.
-- **Python:** Projektlokal 3.13 über `uv`. Das systemweite 3.14 ist unbrauchbar,
-  weil CrewAI `>=3.10,<3.14` verlangt.
+  **Guardrail vor Verifier, und danach noch einmal.** Ob jede Zahl im Text in
+  den übergebenen Kennzahlen vorkommt, prüft eine reine Python-Funktion
+  (`chronicle/guard.py`) — deterministisch und testbar. Der `verifier`
+  beurteilt danach die inhaltlichen Aussagen. Nicht umgekehrt: Was Python
+  mechanisch prüfen kann, wird nicht einem Modell überlassen. Der Guardrail
+  läuft auch **nach** dem Verifier, weil dieser beim Umformulieren eine neue
+  Zahl einführen könnte.
+- **Python:** Projektlokal 3.13 über `uv`. Die frühere Obergrenze `<3.14` kam
+  ausschließlich von CrewAI und ist mit ihm entfallen. 3.13 bleibt gesetzt,
+  damit Entwicklungs- und Zielumgebung denselben Interpreter benutzen.
 - **Neue Skills oder Plugins:** nicht ohne den Prüfmaßstab in
   [`docs/werkzeuge.md`](docs/werkzeuge.md). Ein Skill ist Anweisungstext, den
   der Agent befolgt — in einem Repo mit sieben nicht verhandelbaren Regeln ist

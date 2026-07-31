@@ -269,7 +269,7 @@ class ChronicleConfig(BaseModel):
     # `protected_namespaces` geleert, damit das Feld `model` nicht mit Pydantics
     # eigenem `model_`-Namensraum kollidiert.
     model_config = ConfigDict(extra="forbid", protected_namespaces=())
-    backend: Literal["single", "crew"]
+    backend: Literal["single", "verified"]
     language: str
     base_url: str
     model: str
