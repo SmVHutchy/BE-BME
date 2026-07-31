@@ -91,9 +91,19 @@ def test_weltzeit_wird_ueber_die_epoche_auf_wetterzeit_abgebildet(app_config):
 def test_ohne_epoche_gilt_der_laufbeginn(app_config):
     """Feldbetrieb: Weltzeit 0 ist jetzt, und weil eine Weltsekunde je
     Wanduhrsekunde vergeht, faellt die Wetterzeit mit der Wirklichkeit
-    zusammen."""
-    assert app_config.values.environment.epoch is None
-    service = EnvironmentService(app_config)
+    zusammen.
+
+    Die Epoche wird hier ausdruecklich auf None gesetzt, statt sich auf die
+    ausgelieferte params.yaml zu verlassen: Dort ist sie ein LAUFPARAMETER wie
+    run.seed und steht waehrend eines Zeitrafferlaufs in der Vergangenheit.
+    Ein Test, der an so einem Wert haengt, prueft die Laune des letzten Laufs.
+    """
+    config = app_config.model_copy(update={
+        "values": app_config.values.model_copy(update={
+            "environment": app_config.values.environment.model_copy(update={"epoch": None})
+        })
+    })
+    service = EnvironmentService(config)
     abstand = abs((service.epoch - datetime.now(UTC)).total_seconds())
     assert abstand < 5.0
 

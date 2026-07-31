@@ -62,6 +62,10 @@ class SimConfig(BaseModel):
     # in zwei Stunden durchlaufen - siehe params.yaml und annahmen.md A11.
     speed: float = Field(ge=1.0, le=1000.0)
     readback_interval_s: float = Field(gt=0.0)
+    # Deckelt den Abstand zweier Messpunkte in Weltzeit. Ohne ihn skaliert die
+    # Abtastdichte mit dem Zeitraffer, und der Detektor sieht im Zeitrafferlauf
+    # zu wenige Punkte (docs/annahmen.md A14).
+    max_world_seconds_per_sample: float = Field(gt=0.0)
 
 
 # --- Felder -----------------------------------------------------------------
@@ -245,10 +249,15 @@ class MetricsConfig(BaseModel):
 
 class BloomDetectorConfig(BaseModel):
     model_config = _STRICT
-    window_samples: int = Field(gt=0)
+    # Fenster und Sperrzeit in WELTSTUNDEN, nicht in Stichproben: Dieselbe
+    # Stichprobenzahl deckt bei speed = 1 und speed = 500 voellig verschiedene
+    # Weltzeiten ab, und massgeblich ist die biologische Zeitspanne
+    # (docs/annahmen.md A14).
+    window_world_hours: float = Field(gt=0.0)
     k_mad: float = Field(gt=0.0)
     min_samples: int = Field(gt=0)
-    refractory_samples: int = Field(ge=0)
+    max_window_samples: int = Field(gt=0)
+    refractory_world_hours: float = Field(ge=0.0)
 
 
 class DetectorConfig(BaseModel):

@@ -116,8 +116,13 @@ check("Detektor als reines Python deklariert", "REINES PYTHON" in detect_doc)
 check("Chronikpfad ohne Cloud-Endpunkt",
       cfg["chronicle"]["base_url"].startswith("http://localhost"),
       cfg["chronicle"]["base_url"])
-check("Zeitraffer vorhanden und im Bereich 1..100",
-      1 <= cfg["sim"]["speed"] <= 100, f"speed={cfg['sim']['speed']}")
+# Obergrenze 1000 statt 100: Mit dt_base = 0,1 (Echtzeit bei speed = 1)
+# brauchen sechs Wochen erst ab rund 500-fach zwei Stunden (docs/annahmen.md A11).
+check("Zeitraffer vorhanden und im Bereich 1..1000",
+      1 <= cfg["sim"]["speed"] <= 1000, f"speed={cfg['sim']['speed']}")
+check("Weltzeit-Nullpunkt gesetzt oder bewusst offen",
+      "epoch" in cfg["environment"],
+      f"epoch={cfg['environment']['epoch']} (null = Feldbetrieb)")
 check("Massentoleranz gesetzt", cfg["mass"]["drift_tolerance_pct"] == 2.0)
 check("Chronik-Rueckfallebene ist Voreinstellung",
       cfg["chronicle"]["backend"] == "single")

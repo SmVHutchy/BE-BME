@@ -12,13 +12,20 @@ gegen Ausreisser. Eine Bluete ist selbst ein Ausreisser - wuerde sie in ihre
 eigene Vergleichsbasis eingehen, hobe sie die Schwelle mit an und bliebe unter
 Umstaenden unerkannt.
 
-Fenster und Sperrzeit sind in **Stichproben** definiert, nicht in Minuten. Der
-Grund ist Geschwindigkeitsinvarianz: Metriken treffen alle 5 s Wanduhrzeit ein,
-unabhaengig von `sim.speed`. Bei speed = 100 entspraechen 60 Wanduhrminuten
-hundertmal so viel simulierter Zeit wie bei speed = 1, und der Detektor saehe im
-Zeitraffer eine voellig andere Statistik als im Feldbetrieb - genau die
-Vergleichbarkeit, um derentwillen die Zeitrafferlaeufe existieren
-(docs/annahmen.md A6).
+Fenster und Sperrzeit sind in **Weltstunden** definiert - nicht in Wanduhrzeit
+und nicht in Stichproben.
+
+Der erste Entwurf zaehlte Stichproben (A6). Das machte die Statistik
+geschwindigkeitsinvariant, aber nicht die Weltzeit, die sie abdeckt:
+
+    speed =   1  ->  720 Punkte * 5 Weltsekunden  =    1 Weltstunde
+    speed = 500  ->  720 Punkte * 2500 Weltsek.   = 20,8 Welttage
+
+Eine Bluete entwickelt sich ueber Stunden bis Tage. Ein gleitender Median ueber
+eine Stunde folgt ihr einfach mit, sie hebt sich nie von ihrer eigenen
+Vergleichsbasis ab - der Detektor waere im Feldbetrieb nahezu blind gewesen
+(docs/annahmen.md A14). Massgeblich ist die biologische Zeitspanne, also die
+Weltzeit.
 """
 
 from __future__ import annotations
@@ -59,16 +66,32 @@ def median_absolute_deviation(values: Sequence[float], median: float) -> float:
     return statistics.median([abs(v - median) for v in values])
 
 
+def subsample(values: Sequence[float], limit: int) -> list[float]:
+    """Duennt gleichmaessig aus, wenn es mehr Werte gibt als noetig.
+
+    Im Feldbetrieb fallen in 120 Weltstunden rund 86.000 Messpunkte an. Der
+    Median einer Verteilung aendert sich durch gleichmaessiges Ausduennen
+    praktisch nicht, die Rechenzeit je Stichprobe schon.
+    """
+    if len(values) <= limit:
+        return list(values)
+    schritt = len(values) / limit
+    return [values[int(i * schritt)] for i in range(limit)]
+
+
 def evaluate_bloom(window: Sequence[float], candidate: float,
-                   samples_since_last_event: int | None,
+                   world_hours_since_last_event: float | None,
                    config: BloomDetectorConfig) -> BloomEvaluation:
     """Prueft eine einzelne Stichprobe gegen die Bluete-Regel.
 
-    `window` sind die vorangegangenen Messwerte der Produzentenbiomasse, ohne
-    `candidate`. Der Kandidat bleibt bewusst draussen: Er soll die Schwelle
-    nicht mitbestimmen, gegen die er geprueft wird.
+    `window` sind die Messwerte der Produzentenbiomasse aus den vergangenen
+    `config.window_world_hours` **Weltstunden**, ohne `candidate`. Die Auswahl
+    nach Weltzeit trifft der Metrikspeicher; hier kommt sie fertig an.
 
-    `samples_since_last_event` ist `None`, wenn im Lauf noch kein Ereignis
+    Der Kandidat bleibt bewusst draussen: Er soll die Schwelle nicht
+    mitbestimmen, gegen die er geprueft wird.
+
+    `world_hours_since_last_event` ist `None`, wenn im Lauf noch kein Ereignis
     aufgetreten ist.
     """
     if len(window) < config.min_samples:
@@ -78,16 +101,16 @@ def evaluate_bloom(window: Sequence[float], candidate: float,
             value=candidate,
         )
 
-    if (samples_since_last_event is not None
-            and samples_since_last_event < config.refractory_samples):
+    if (world_hours_since_last_event is not None
+            and world_hours_since_last_event < config.refractory_world_hours):
         return BloomEvaluation(
             triggered=False,
-            reason=(f"Sperrzeit aktiv ({samples_since_last_event} < "
-                    f"{config.refractory_samples} Stichproben)"),
+            reason=(f"Sperrzeit aktiv ({world_hours_since_last_event:.1f} < "
+                    f"{config.refractory_world_hours} Weltstunden)"),
             value=candidate,
         )
 
-    recent = list(window[-config.window_samples:])
+    recent = subsample(window, config.max_window_samples)
     median = statistics.median(recent)
     mad = median_absolute_deviation(recent, median)
     threshold = median + config.k_mad * mad

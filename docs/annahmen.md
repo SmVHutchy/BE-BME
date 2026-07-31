@@ -104,7 +104,14 @@ Stellen ausdruecklich benannt.
 
 ---
 
-## A6 — Detektorfenster in Messpunkten statt in Minuten
+## A6 — Detektorfenster in Messpunkten statt in Minuten (ÜBERHOLT durch A14)
+
+> **Diese Annahme war halb richtig und dadurch gefaehrlich.** Sie stellte
+> Geschwindigkeitsinvarianz der *Statistik* her, aber nicht der *Weltzeit*, die
+> sie abdeckt - und massgeblich ist die biologische Zeitspanne. Siehe A14. Der
+> Text bleibt stehen, weil die urspruengliche Ueberlegung nachvollziehbar sein
+> soll.
+
 
 **Ort:** `config/params.yaml` → `detector.bloom.window_samples`,
 `.refractory_samples`
@@ -430,6 +437,107 @@ mitsamt der Messung, die ihn ausgeloest hat.
 **Offen.** Der Wert ist auf Nuernberg gerechnet. Steht das Objekt in einem
 Haushalt mit anderem Klima, ist er neu zu bestimmen. Er haengt also am
 Standort, genau wie `environment.latitude`.
+
+---
+
+## A14 — Detektorfenster in Weltzeit statt in Stichproben
+
+**Ort:** `config/params.yaml` → `detector.bloom`,
+`core/src/frame_core/detect/bloom.py`, `core/src/frame_core/metrics/store.py`
+
+**Loest A6 ab.** A6 definierte Fenster und Sperrzeit in Stichproben, um die
+Statistik geschwindigkeitsinvariant zu halten. Das gelingt auch — nur deckt
+dieselbe Stichprobenzahl voellig verschiedene Weltzeiten ab:
+
+| Betriebsart | Abstand je Stichprobe | Fenster (720 Punkte) |
+|---|---|---|
+| Feldbetrieb `speed = 1` | 5 Weltsekunden | **1 Weltstunde** |
+| Zeitraffer `speed = 500` | 2500 Weltsekunden | **20,8 Welttage** |
+
+**Warum das ernst ist.** Eine Bluete entwickelt sich ueber Stunden bis Tage
+(Verdopplung 4 h, Lebensdauer 60 h). Ein gleitender Median ueber **eine
+Weltstunde** folgt ihr einfach mit - sie hebt sich nie von ihrer eigenen
+Vergleichsbasis ab. Der Detektor waere im Feldbetrieb nahezu blind gewesen, und
+aufgefallen waere es erst in Monat 3, wenn die Chronik leer bleibt und niemand
+mehr weiss, ob das an der Simulation oder am Detektor liegt.
+
+Der Fund kam aus einer Nebenrechnung waehrend des ersten gueltigen
+Zeitrafferlaufs, nicht aus einem Test - die Tests waren gruen, weil sie
+Stichprobenzahlen gegen Stichprobenzahlen prueften.
+
+**Die Loesung.** Fenster und Sperrzeit stehen in **Weltstunden**. Die
+Metriknachricht traegt `world_time` bereits (A11), der Speicher waehlt also
+nach Weltzeitspanne aus statt nach Zeilenzahl:
+
+    window_world_hours: 120.0      # 5 Welttage
+    refractory_world_hours: 48.0   # 2 Welttage
+    min_samples: 120               # statistische Untergrenze, unabhaengig davon
+    max_window_samples: 2000       # Kostendeckel mit gleichmaessiger Ausduennung
+
+`min_samples` bleibt in Stichproben, weil es eine andere Frage beantwortet: Mit
+weniger Punkten ist der Median nicht belastbar, gleich wieviel Weltzeit sie
+abdecken. `max_window_samples` deckelt die Kosten - im Feldbetrieb fielen in
+120 Weltstunden sonst rund 86.000 Punkte an.
+
+**Nachgewiesen** durch `test_gleiche_weltzeitspanne_ergibt_gleiche_entscheidung`:
+Dieselbe Kurve, einmal fein (6000 Punkte, Feldbetrieb) und einmal grob
+(240 Punkte, Zeitraffer) abgetastet, ergibt dieselbe Bluetenentscheidung.
+
+---
+
+## A15 — Wachstum gegen Sterben: die Drosselungsfalle
+
+**Ort:** `config/params.yaml` → `field.producer`
+
+**Der Fehler.** Verdopplungszeit 9 h gegen Lebensdauer 26 h liest sich wie
+"Wachstum gewinnt 2:1". Tatsaechlich verlor es um Faktor 3,2, und die Biomasse
+fiel im Zeitrafferlauf vom 30.07.2026 in drei Welttagen von 5000 auf 1087.
+
+**Die Ursache.** Das Wachstum wird zweifach gedrosselt, das Sterben nicht:
+
+    Naehrstofffaktor   n/(n+half)                  rund 0,63
+    Lichtfaktor        L/(L+half), Tagesmittel     rund 0,25   <- nachts NULL
+    ------------------------------------------------------------------------
+    wirksames Wachstum = Rohrate * 0,157
+
+**Die Produzenten sterben rund um die Uhr, wachsen aber nur tagsueber.** Der
+Lichtfaktor ist nicht etwa "im Mittel 0,7", sondern die Haelfte der Zeit exakt
+null - und das Sterben laeuft weiter.
+
+**Faustregel fuer jede kuenftige Aenderung:**
+
+    doubling_time_hours  <  lifetime_hours * 0,157 * ln 2
+
+Bei 60 h Lebensdauer sind das rund 6,5 h als Obergrenze. Gesetzt sind 4,0 h,
+was dem Wachstum rund 60 % Vorsprung laesst - genug fuer eine Bluete, nicht
+genug fuer eine Dauerexplosion, die ohnehin von `max_density` und der
+Naehrstoffzehrung gebremst wird.
+
+**Warum das eine Entwurfsentscheidung ist und keine Einstellung.** Die beiden
+Zeitkonstanten legen fest, auf welcher Zeitskala das Bild atmet - also genau
+die Groesse, um die es in der Arbeit geht. Sie stehen in Stunden in der Config,
+damit dieser Zusammenhang lesbar bleibt; als Raten je Weltsekunde waere der
+Fehler nicht aufgefallen und auch nicht erklaerbar gewesen.
+
+---
+
+## A16 — Soak-Laeufe brauchen ein sichtbares Fenster
+
+**Ort:** `sim/src/main.ts` (Soak-Modus), Betriebsdokumentation
+
+Chrome drosselt in verborgenen Tabs sowohl Zeitgeber als auch GPU-Arbeit.
+Gemessen: rund 10.000 Ticks/s bei sichtbarem Fenster gegen rund 1.000 Ticks/s
+bei verborgenem - Faktor zehn.
+
+**Folge.** Ein Messlauf am Entwicklungsrechner muss im Vordergrund laufen. Im
+Kioskbetrieb ist das ohnehin gegeben, dort ist das Fenster immer sichtbar.
+
+**Zusammenhang mit dem Entwurf.** Dies ist derselbe Mechanismus, der in Phase 2
+die Tick-Schleife aus `requestAnimationFrame` herausgezwungen hat: Ein
+verborgenes Fenster fuehrt rAF ueberhaupt nicht mehr aus. Der Zeitgeber laeuft
+weiter, nur langsamer - die Welt bleibt also stehen, statt zu sterben. Das ist
+der Unterschied zwischen der damaligen Fehlkonstruktion und dieser
+Betriebseigenschaft.
 
 ---
 

@@ -18,6 +18,8 @@ export interface SimConfig {
     dt_base: number;
     speed: number;
     readback_interval_s: number;
+    /** Deckelt den Abstand zweier Messpunkte in Weltzeit (A14). */
+    max_world_seconds_per_sample: number;
   };
   field: {
     nutrient: {

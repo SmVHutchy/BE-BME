@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS metrics (
     run_id        INTEGER NOT NULL REFERENCES runs(id),
     t             TEXT    NOT NULL,
     tick          INTEGER NOT NULL,
+    world_time    REAL    NOT NULL,
     nutrient      REAL    NOT NULL,
     producer      REAL    NOT NULL,
     consumer      REAL    NOT NULL,
@@ -49,6 +50,8 @@ CREATE TABLE IF NOT EXISTS metrics (
     occupancy     REAL    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_metrics_run_tick ON metrics(run_id, tick);
+-- Der Detektor waehlt nach WELTZEIT aus, nicht nach Zeilenzahl (A14).
+CREATE INDEX IF NOT EXISTS idx_metrics_run_world ON metrics(run_id, world_time);
 
 CREATE TABLE IF NOT EXISTS env_applied (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -142,27 +145,44 @@ class MetricsStore:
         with self._lock:
             self._conn.execute(
                 """INSERT INTO metrics
-                   (run_id, t, tick, nutrient, producer, consumer, total,
-                    inflow_total, outflow_total, lineages, occupancy)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (run_id, message.t, message.tick, mass.nutrient, mass.producer,
-                 mass.consumer, mass.total, mass.inflow_total, mass.outflow_total,
+                   (run_id, t, tick, world_time, nutrient, producer, consumer,
+                    total, inflow_total, outflow_total, lineages, occupancy)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (run_id, message.t, message.tick, message.world_time,
+                 mass.nutrient, mass.producer, mass.consumer, mass.total,
+                 mass.inflow_total, mass.outflow_total,
                  message.lineages, message.occupancy),
             )
             self._conn.commit()
 
-    def recent_producer_series(self, run_id: int, limit: int) -> list[float]:
-        """Die juengsten Produzentenwerte, aelteste zuerst.
+    def producer_series_since(self, run_id: int, since_world_time: float) -> list[float]:
+        """Produzentenwerte ab einer Weltzeit, aelteste zuerst.
 
-        Reihenfolge ist wichtig: Der Detektor erwartet eine chronologische
-        Zeitreihe, SQLite liefert bei DESC die umgekehrte.
+        Auswahl nach WELTZEIT statt nach Zeilenzahl: Dieselbe Stichprobenzahl
+        deckt bei speed = 1 und speed = 500 voellig verschiedene Weltzeiten ab,
+        und massgeblich ist die biologische Zeitspanne (docs/annahmen.md A14).
+
+        Reihenfolge aufsteigend, weil der Detektor eine chronologische Reihe
+        erwartet.
         """
         with self._lock:
             rows = self._conn.execute(
-                "SELECT producer FROM metrics WHERE run_id = ? ORDER BY tick DESC LIMIT ?",
-                (run_id, limit),
+                "SELECT producer FROM metrics WHERE run_id = ? AND world_time >= ? "
+                "ORDER BY world_time ASC",
+                (run_id, since_world_time),
             ).fetchall()
-        return [float(row["producer"]) for row in reversed(rows)]
+        return [float(row["producer"]) for row in rows]
+
+    def last_event_world_time(self, run_id: int) -> float | None:
+        """Weltzeit des letzten Chronikereignisses - fuer die Sperrzeit."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT m.world_time FROM chronicle_entries c "
+                "JOIN metrics m ON m.run_id = c.run_id AND m.tick = c.tick "
+                "WHERE c.run_id = ? ORDER BY c.id DESC LIMIT 1",
+                (run_id,),
+            ).fetchone()
+        return float(row["world_time"]) if row else None
 
     def first_total(self, run_id: int) -> float | None:
         """Startmasse des Laufs - Bezugsgroesse der Massenbilanz."""

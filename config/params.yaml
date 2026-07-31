@@ -91,12 +91,26 @@ sim:
   #   speed = 1000  ->   1,0 h     10.000 Ticks/s
   # Gemessen wurden 10.092 Ticks/s; 500 traegt mit Reserve, 1000 liegt am Rand.
   # Abweichung dokumentiert in docs/annahmen.md A11.
-  speed: 1.0
+  speed: 500.0
 
   # Abstand der Massen-Readbacks von der GPU in Sekunden Wanduhrzeit. Entspricht
   # dem Metrikintervall im Vertrag. Niedrige Frequenz, weil ein Readback die
   # Pipeline synchronisiert; die Massenbilanz selbst wird jeden Tick gerechnet.
   readback_interval_s: 5.0
+
+  # Obergrenze fuer den Abstand zweier Messpunkte in WELTZEIT.
+  #
+  # Ohne diesen Deckel skaliert die Abtastdichte mit dem Zeitraffer: Bei
+  # speed = 500 liegen zwischen zwei Messpunkten 2500 Weltsekunden, im
+  # Feldbetrieb 5. Gemessen am 31.07.2026: Ein Lauf ueber sieben Welttage
+  # erzeugte nur 79 Messpunkte - der Detektor kam nie ueber seine statistische
+  # Untergrenze von 120, und die Chronik blieb leer.
+  #
+  # 300 Weltsekunden = 5 Weltminuten. Damit ergeben sieben Welttage rund 2000
+  # Punkte, und der Abstand zum Feldbetrieb schrumpft von Faktor 500 auf 60.
+  # Der Deckel macht den Zeitraffer also TREUER, nicht langsamer - er kostet nur
+  # haeufigere Readbacks, und die laufen asynchron.
+  max_world_seconds_per_sample: 300.0
 
 
 # --- Felder: Naehrstoff -----------------------------------------------------
@@ -136,11 +150,29 @@ field:
     input_per_day_at_max: 0.035
 
   producer:
-    # Verdopplungszeit bei Licht- und Naehrstoffsaettigung. Zusammen mit
-    # lifetime_hours legt sie fest, wie schnell das Bild atmet: Wachstum
-    # deutlich schneller als Sterben, sonst kommt keine Bluete zustande - nicht
-    # zu viel schneller, sonst kippt es in Dauerexplosion.
-    doubling_time_hours: 9.0
+    # Verdopplungszeit bei Licht- und NaehrstoffSAETTIGUNG.
+    #
+    # ACHTUNG, hier steckt eine Falle, in die dieses Projekt schon einmal
+    # gelaufen ist. Der Vergleich mit lifetime_hours taeuscht: Man liest
+    # "9 h Verdopplung gegen 26 h Lebensdauer, Wachstum gewinnt 2:1" - und
+    # liegt falsch. Das Wachstum wird zweifach gedrosselt, das Sterben nicht:
+    #
+    #   Naehrstofffaktor  n/(n+half)              rund 0,63
+    #   Lichtfaktor       L/(L+half), Tagesmittel rund 0,25   <- nachts NULL
+    #   ------------------------------------------------------------------
+    #   wirksames Wachstum = roh * 0,157
+    #
+    # Die Produzenten sterben rund um die Uhr, wachsen aber nur tagsueber.
+    # Mit 9 h verlor das Wachstum um Faktor 3,2, und die Biomasse fiel im
+    # Zeitrafferlauf vom 30.07.2026 in drei Welttagen von 5000 auf 1087.
+    #
+    # Faustregel fuer jede Aenderung hier:
+    #   doubling_time_hours < lifetime_hours * 0,157 * ln(2)
+    # Bei lifetime 60 h ergibt das rund 6,5 h als Obergrenze; 4,0 h laesst dem
+    # Wachstum rund 60 % Vorsprung - genug fuer eine Bluete, nicht genug fuer
+    # eine Dauerexplosion, die ohnehin von max_density und der Naehrstoff-
+    # zehrung gebremst wird.
+    doubling_time_hours: 4.0
     # Michaelis-Menten-Halbsaettigung: Lichtwert, bei dem das Wachstum die
     # Haelfte des Maximums erreicht. Bestimmt, wie stark bewoelkte Tage bremsen.
     light_half_saturation: 0.35
@@ -148,8 +180,12 @@ field:
     # wird und wie eng Wachstum an den Niederschlag gekoppelt ist.
     nutrient_half_saturation: 0.25
     # Mittlere Lebensdauer der Biomasse - die Zeitskala, auf der sich das Bild
-    # sichtbar umschichtet. Rund ein Welttag.
-    lifetime_hours: 26.0
+    # sichtbar umschichtet. Von 26 auf 60 Stunden angehoben, gemeinsam mit der
+    # Verdopplungszeit (siehe dort): Beide Werte zusammen entscheiden, ob das
+    # System traegt. 60 h sind rund zweieinhalb Welttage - langsam genug fuer
+    # ein Objekt, das nicht um Aufmerksamkeit wirbt, schnell genug, dass sich
+    # zwischen Woche 1 und Woche 6 etwas geaendert hat.
+    lifetime_hours: 60.0
     # Harte Obergrenze der lokalen Dichte (Risiko 1: Populationsexplosion).
     max_density: 1.0
 
@@ -359,9 +395,9 @@ environment:
   # Zeitrafferlauf dreizehn Tage Dauernacht erzeugt und das Oekosystem
   # ausgeloescht hat (docs/annahmen.md A11).
   #
-  # Beispiel fuer einen Sechs-Wochen-Lauf ab Mitte Juni:
-  #   epoch: "2026-06-15T00:00:00+02:00"
-  epoch: null
+  # Aktuell auf einen Zeitrafferlauf gestellt: sechs Wochen ab Mitte Juni 2026.
+  # Fuer den Feldbetrieb auf `null` zuruecksetzen.
+  epoch: "2026-06-18T00:00:00+02:00"
   # Open-Meteo benoetigt keinen API-Schluessel. Bedarf laut Expose 3.5:
   # 24 Aufrufe taeglich gegen ein Freikontingent von 10.000.
   poll_interval_min: 60
@@ -430,20 +466,39 @@ metrics:
 # Kein Sprachmodell (Expose 6.4). In Prototyp 0 genau eine Regel.
 detector:
   bloom:
-    # Fenster W des gleitenden Medians, in Messpunkten statt in Minuten.
-    # ANNAHME: Bewusst in Stichproben, damit der Detektor im Zeitraffer
-    # dieselbe Statistik sieht wie im Feldbetrieb. Bei speed = 100 entspraechen
-    # 60 Wanduhr-Minuten sehr unterschiedlich viel simulierter Zeit; eine
-    # Fensterdefinition in Wanduhrzeit waere nicht geschwindigkeitsinvariant.
-    # 720 Punkte * 5 s = 1 h Wanduhrzeit bei speed = 1.
-    window_samples: 720
+    # Fenster W des gleitenden Medians, in WELTSTUNDEN.
+    #
+    # Frueher stand hier eine Stichprobenzahl (720). Das machte die Statistik
+    # geschwindigkeitsinvariant, aber nicht die Weltzeit, die sie abdeckt:
+    #   speed =   1  ->  720 Punkte * 5 Weltsekunden  =    1 Weltstunde
+    #   speed = 500  ->  720 Punkte * 2500 Weltsek.   = 20,8 Welttage
+    # Eine Bluete entwickelt sich ueber Stunden bis Tage. Ein gleitender Median
+    # ueber eine Stunde FOLGT ihr einfach mit - sie hebt sich nie von ihrer
+    # eigenen Vergleichsbasis ab, und der Detektor waere im Feldbetrieb blind
+    # (docs/annahmen.md A14).
+    #
+    # 120 Weltstunden = 5 Welttage. Deutlich laenger als die Zeitskala einer
+    # Bluete (Verdopplung 4 h, Lebensdauer 60 h), damit sie sich gegen einen
+    # ruhigen Vorlauf abhebt.
+    window_world_hours: 120.0
+
     # Ausloesung bei Biomasse > gleitender Median + k * MAD.
     k_mad: 4.0
-    # Vor so vielen Punkten ist die Statistik nicht belastbar - kein Ereignis.
+
+    # Statistische Untergrenze. Unabhaengig von der Weltzeitspanne: Mit weniger
+    # Punkten ist der Median nicht belastbar, egal wieviel Weltzeit sie abdecken.
     min_samples: 120
-    # Sperrzeit nach einer Ausloesung, ebenfalls in Messpunkten. Verhindert,
-    # dass eine einzige Bluete als Dutzend Ereignisse in der Chronik landet.
-    refractory_samples: 360
+
+    # Kostendeckel. Im Feldbetrieb fallen in 120 Weltstunden rund 86.000
+    # Messpunkte an (alle 5 Weltsekunden einer). Darueber wird gleichmaessig
+    # unterabgetastet - der Median einer Verteilung aendert sich dadurch
+    # praktisch nicht, die Rechenzeit je Stichprobe schon.
+    max_window_samples: 2000
+
+    # Sperrzeit nach einer Ausloesung, ebenfalls in WELTSTUNDEN. Verhindert,
+    # dass eine einzige Bluete als Dutzend Eintraege in der Chronik landet.
+    # 48 Weltstunden = zwei Welttage, knapp unter der Lebensdauer der Biomasse.
+    refractory_world_hours: 48.0
 
 
 # --- Chronikpipeline --------------------------------------------------------

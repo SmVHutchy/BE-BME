@@ -68,9 +68,11 @@ class AppState:
     connections: set[WebSocket] = field(default_factory=set)
     tasks: list[asyncio.Task] = field(default_factory=list)
 
-    samples_since_event: int | None = None
-    """Stichproben seit dem letzten erkannten Ereignis. `None`, solange im Lauf
-    noch keines aufgetreten ist."""
+    last_event_world_time: float | None = None
+    """Weltzeit des letzten erkannten Ereignisses. `None`, solange im Lauf noch
+    keines aufgetreten ist. In Weltzeit, nicht in Stichproben - die Sperrzeit
+    soll eine biologische Dauer sein und nicht von `sim.speed` abhaengen
+    (docs/annahmen.md A14)."""
     world_time: float = 0.0
     """Zuletzt von `sim` gemeldete Weltzeit in Sekunden. Bestimmt, welches
     Wetter gilt - nicht die Wanduhrzeit (docs/annahmen.md A11)."""
@@ -162,13 +164,18 @@ def evaluate_and_build_event(state: AppState, message: MetricsMessage) -> Detect
     (Expose 6.4).
     """
     bloom_config = state.config.values.detector.bloom
-    window = state.store.recent_producer_series(state.run_id, bloom_config.window_samples)
+    # Auswahl nach WELTZEIT, nicht nach Zeilenzahl (docs/annahmen.md A14).
+    seit = message.world_time - bloom_config.window_world_hours * 3600.0
+    window = state.store.producer_series_since(state.run_id, seit)
     # Die soeben eingefuegte Stichprobe gehoert nicht in ihre eigene
     # Vergleichsbasis.
     window = window[:-1] if window else window
 
-    result = evaluate_bloom(window, message.mass.producer,
-                            state.samples_since_event, bloom_config)
+    seit_ereignis = None
+    if state.last_event_world_time is not None:
+        seit_ereignis = (message.world_time - state.last_event_world_time) / 3600.0
+
+    result = evaluate_bloom(window, message.mass.producer, seit_ereignis, bloom_config)
     if not result.triggered:
         logger.debug("Detektor: %s", result.reason)
         return None
@@ -240,8 +247,6 @@ async def handle_metrics(state: AppState, message: MetricsMessage) -> None:
     # damit Detektor und Chronik dieselbe Weltzeit sehen wie der Klimakanal.
     state.world_time = message.world_time
 
-    if state.samples_since_event is not None:
-        state.samples_since_event += 1
 
     # Massenbilanz: Residualsaldo, nicht Konstanz.
     initial_total = state.store.first_total(state.run_id)
@@ -269,7 +274,7 @@ async def handle_metrics(state: AppState, message: MetricsMessage) -> None:
     if event is None:
         return
 
-    state.samples_since_event = 0
+    state.last_event_world_time = message.world_time
 
     if not chronicle_allowed_now(state):
         logger.info("Chronik: Mindestabstand noch nicht erreicht, Ereignis bei "
@@ -353,7 +358,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     # Sofort den aktuellen Klimastand schicken, damit eine frisch verbundene
     # Simulation nicht bis zum naechsten Nachfuehrtakt mit Vorgabewerten rechnet.
-    env = state.environment.current_env()
+    env = state.environment.current_env(state.world_time)
     if env is not None:
         state.last_env = env
         await websocket.send_json({"env": env.model_dump(mode="json")})

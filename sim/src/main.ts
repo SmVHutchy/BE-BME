@@ -249,6 +249,8 @@ async function main(): Promise<void> {
   let lastRender = performance.now();
   let tickAccumulator = 0;
   let sinceReadback = 0;
+  /** Weltzeit der letzten Stichprobe - deckelt den Abstand im Zeitraffer. */
+  let lastSampleWorldTime = 0;
   let sinceHealth = 0;
   let sinceSnapshot = 0;
   let frameMs = 0;
@@ -257,34 +259,32 @@ async function main(): Promise<void> {
   let measuredHz = 0;
   let chronicle: { t: string; text: string }[] = [];
 
-  function simulationStep(): void {
-    const now = performance.now();
-    const dtWall = Math.min((now - lastStep) / 1000, 1.0);
-    lastStep = now;
-
-    const rate = client.env?.rate ?? 1;
-    const dtWorld = config.sim.dt_base * rate;
-    const ticksPerSecond = config.sim.tick_hz * config.sim.speed;
-
-    tickAccumulator += dtWall * ticksPerSecond;
-    // Sicherheitsventil: Nie mehr als eine Sekunde Rueckstand aufholen. Was
-    // darueber hinausgeht, wird verworfen und gezaehlt - dann haelt die GPU den
-    // gewuenschten Takt nicht, und genau das soll im Health-Log sichtbar werden
-    // (Rueckfallebene Risiko 3: Takt senken statt Aufloesung senken).
-    if (tickAccumulator > ticksPerSecond) {
-      droppedTicks += Math.floor(tickAccumulator - ticksPerSecond);
-      tickAccumulator = ticksPerSecond;
-    }
-
-    const ticksNow = Math.floor(tickAccumulator);
-    tickAccumulator -= ticksNow;
-    for (let i = 0; i < ticksNow; i++) step(dtWorld, dtWall / Math.max(ticksNow, 1));
-    ticksThisSecond += ticksNow;
-
-    // --- Readback und Metriken -------------------------------------------
-    sinceReadback += dtWall;
-    if (sinceReadback >= config.sim.readback_interval_s) {
+  /**
+   * Alles, was NACH den Ticks passiert: Readback, Metriken, Health, Snapshot.
+   *
+   * Bewusst herausgezogen, damit der Zeitgeber und `runTicks` durch **dieselben
+   * Stellen** laufen. Vorher meldete `runTicks` gar nichts - `core` erfuhr die
+   * Weltzeit nie, das Wetter stand still, Detektor und Chronik liefen nicht mit
+   * und das Health-Log blieb leer. Ein Zeitraffer, der an der halben Anlage
+   * vorbeilaeuft, misst nicht den Feldbetrieb (docs/annahmen.md A11).
+   *
+   * `elapsedWall` ist die verstrichene Wanduhrzeit seit dem letzten Aufruf; im
+   * Burst die anteilig gerechnete.
+   */
+  function reportAndPersist(elapsedWall: number): void {
+    sinceReadback += elapsedWall;
+    // Zwei Ausloeser, und der zweite ist der Grund, warum ueberhaupt einer
+    // reicht: Die Wanduhrbedingung allein laesst die Abtastdichte mit dem
+    // Zeitraffer zusammenbrechen. Bei speed = 500 kamen so nur 158 Messpunkte
+    // je Siebentagelauf zustande - zu wenige fuer den Detektor (A14).
+    //
+    // Im Feldbetrieb greift immer die erste Bedingung zuerst (5 Weltsekunden
+    // gegen 300), dort aendert der Deckel also nichts.
+    const worldSinceSample = worldTime - lastSampleWorldTime;
+    if (sinceReadback >= config.sim.readback_interval_s
+        || worldSinceSample >= config.sim.max_world_seconds_per_sample) {
       sinceReadback = 0;
+      lastSampleWorldTime = worldTime;
       reducer.requestReadback();
     }
     const totals = reducer.poll();
@@ -310,7 +310,7 @@ async function main(): Promise<void> {
     }
 
     // --- Takt messen ------------------------------------------------------
-    sinceHzSample += dtWall;
+    sinceHzSample += elapsedWall;
     if (sinceHzSample >= 1) {
       measuredHz = ticksThisSecond / sinceHzSample;
       ticksThisSecond = 0;
@@ -318,7 +318,7 @@ async function main(): Promise<void> {
     }
 
     // --- Health -----------------------------------------------------------
-    sinceHealth += dtWall;
+    sinceHealth += elapsedWall;
     if (sinceHealth >= config.health.interval_s) {
       sinceHealth = 0;
       const memory = (performance as { memory?: { usedJSHeapSize: number } }).memory;
@@ -342,7 +342,7 @@ async function main(): Promise<void> {
     }
 
     // --- Snapshot ---------------------------------------------------------
-    sinceSnapshot += dtWall;
+    sinceSnapshot += elapsedWall;
     if (sinceSnapshot >= config.snapshot.interval_minutes * 60) {
       sinceSnapshot = 0;
       void saveSnapshot(
@@ -359,6 +359,72 @@ async function main(): Promise<void> {
         config.snapshot.keep_last,
       ).catch((error: unknown) => console.warn("Snapshot fehlgeschlagen:", error));
     }
+  }
+
+  /**
+   * Rechnet `count` Ticks am Stueck und meldet dabei im Normalintervall.
+   *
+   * Fuer Zeitrafferlaeufe und die Abnahme. Die Tick-Folge ist dieselbe wie im
+   * Normalbetrieb, und gemeldet wird ueber `reportAndPersist` - also durch
+   * dieselben Stellen. Ohne das liefe der Burst an Wetter, Detektor, Chronik
+   * und Health-Log vorbei und waere kein Abbild des Feldbetriebs.
+   */
+  function runTicks(count: number): { ticks: number; ms: number } {
+    const started = performance.now();
+    // Ticks je Meldung - das Minimum aus zwei Bedingungen:
+    //   nach Wanduhrzeit  wie im Normalbetrieb
+    //   nach WELTZEIT     damit die Abtastdichte nicht mit dem Zeitraffer
+    //                     zusammenbricht. Ohne diesen Deckel lagen bei
+    //                     speed = 500 ganze 2500 Weltsekunden zwischen zwei
+    //                     Punkten, und ein Lauf ueber sieben Welttage lieferte
+    //                     nur 79 - zu wenige fuer den Detektor (A14).
+    const perReportWall = config.sim.readback_interval_s * config.sim.tick_hz * config.sim.speed;
+    const perReportWorld = config.sim.max_world_seconds_per_sample / config.sim.dt_base;
+    const perReport = Math.max(1, Math.round(Math.min(perReportWall, perReportWorld)));
+
+    let done = 0;
+    while (done < count) {
+      const chunk = Math.min(perReport, count - done);
+      // rate JE ABSCHNITT neu lesen, nicht einmal fuer den ganzen Burst -
+      // sonst friert die Temperaturkopplung auf dem Startwert ein.
+      const dtWorld = config.sim.dt_base * (client.env?.rate ?? 1);
+      for (let i = 0; i < chunk; i++) step(dtWorld, 1 / config.sim.tick_hz);
+      done += chunk;
+      ticksThisSecond += chunk;
+      // Die Wanduhrzeit, die diese Ticks im Normalbetrieb gedauert haetten.
+      // Nicht pauschal readback_interval_s: Sobald der Weltzeitdeckel greift,
+      // sind die Abschnitte kuerzer, und Health- und Snapshot-Takt wuerden
+      // sonst vorlaufen.
+      reportAndPersist(chunk / (config.sim.tick_hz * config.sim.speed));
+    }
+    return { ticks: count, ms: performance.now() - started };
+  }
+
+  /** Der Zeitgeber: rechnet die faelligen Ticks und meldet danach. */
+  function simulationStep(): void {
+    const now = performance.now();
+    const dtWall = Math.min((now - lastStep) / 1000, 1.0);
+    lastStep = now;
+
+    const dtWorld = config.sim.dt_base * (client.env?.rate ?? 1);
+    const ticksPerSecond = config.sim.tick_hz * config.sim.speed;
+
+    tickAccumulator += dtWall * ticksPerSecond;
+    // Sicherheitsventil: Nie mehr als eine Sekunde Rueckstand aufholen. Was
+    // darueber hinausgeht, wird verworfen und gezaehlt - dann haelt die GPU den
+    // gewuenschten Takt nicht, und genau das soll im Health-Log sichtbar werden
+    // (Rueckfallebene Risiko 3: Takt senken statt Aufloesung senken).
+    if (tickAccumulator > ticksPerSecond) {
+      droppedTicks += Math.floor(tickAccumulator - ticksPerSecond);
+      tickAccumulator = ticksPerSecond;
+    }
+
+    const ticksNow = Math.floor(tickAccumulator);
+    tickAccumulator -= ticksNow;
+    for (let i = 0; i < ticksNow; i++) step(dtWorld, dtWall / Math.max(ticksNow, 1));
+    ticksThisSecond += ticksNow;
+
+    reportAndPersist(dtWall);
 
   }
 
@@ -421,10 +487,80 @@ async function main(): Promise<void> {
     initialOutflow = totals.outflow;
   }
 
+  /**
+   * Soak-Modus: `?soak=<Welttage>`.
+   *
+   * Faehrt den Lauf in Abschnitten und gibt zwischen ihnen an den Ereignisleser
+   * zurueck, damit der WebSocket senden kann und `core` neue Klimawerte
+   * zurueckschickt. Ohne dieses Nachgeben liefe der ganze Lauf in einem
+   * blockierenden Rutsch und das Wetter stuende wieder still.
+   *
+   * Diagnosewerkzeug wie das Entwickler-Overlay - keine Interaktionsform. Der
+   * Lauf meldet ueber den normalen Vertrag, damit gemessen wird, was auch im
+   * Feldbetrieb passiert.
+   */
+  async function runSoak(worldDays: number): Promise<void> {
+    // Auf den ersten Klimasatz warten. Ohne ihn startete der Lauf mit
+    // Licht 0 - also genau der Dauernacht, wegen der A11 aufgefallen ist.
+    for (let i = 0; i < 60 && client.env === null; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    if (client.env === null) {
+      console.error("Soak: keine Klimawerte von core - Lauf waere nicht aussagekraeftig.");
+      return;
+    }
+
+    const target = worldTime + worldDays * 86400;
+    const batch = Math.max(
+      1,
+      Math.round(config.sim.readback_interval_s * config.sim.tick_hz * config.sim.speed),
+    );
+    const started = performance.now();
+    let lastLog = started;
+
+    console.info(
+      `Soak: ${worldDays} Welttage bei speed=${config.sim.speed}, ` +
+        `${batch} Ticks je Abschnitt. Start bei Weltzeit ${(worldTime / 86400).toFixed(2)} d.`,
+    );
+
+    while (worldTime < target) {
+      runTicks(batch);
+      // Nachgeben: WebSocket senden lassen, env empfangen, Chronik laufen lassen.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const now = performance.now();
+      if (now - lastLog > 10000) {
+        lastLog = now;
+        const fortschritt = ((worldTime - (target - worldDays * 86400)) / (worldDays * 86400)) * 100;
+        console.info(
+          `Soak: ${fortschritt.toFixed(1)} %  Welttag ${(worldTime / 86400).toFixed(2)}  ` +
+            `Biomasse ${lastMass?.producer.toFixed(0) ?? "?"}  ` +
+            `Residuum ${driftPercent()?.toFixed(3) ?? "?"} %  ` +
+            `Licht ${client.env?.light.toFixed(3) ?? "?"}`,
+        );
+      }
+    }
+
+    const dauer = (performance.now() - started) / 1000;
+    console.info(
+      `Soak fertig: ${worldDays} Welttage in ${dauer.toFixed(0)} s Wanduhrzeit, ` +
+        `Tick ${tick}, Biomasse ${lastMass?.producer.toFixed(0) ?? "?"}, ` +
+        `Residuum ${driftPercent()?.toFixed(3) ?? "?"} %. ` +
+        `Auswertung: uv run --project core python scripts/soak_report.py`,
+    );
+    (window as unknown as { soakDone: boolean }).soakDone = true;
+  }
+
   // Der Zeitgeber feuert mit tick_hz; je Aufruf werden die faelligen Ticks
   // abgearbeitet. Bei speed = 100 sind das 100 Ticks je Aufruf.
-  const stepIntervalMs = 1000 / config.sim.tick_hz;
-  window.setInterval(simulationStep, stepIntervalMs);
+  const soakDays = Number(new URLSearchParams(location.search).get("soak"));
+  if (soakDays > 0) {
+    // Im Soak-Modus kein Zeitgeber: Der Lauf treibt sich selbst, sonst wuerden
+    // beide gleichzeitig Ticks rechnen.
+    void runSoak(soakDays);
+  } else {
+    window.setInterval(simulationStep, 1000 / config.sim.tick_hz);
+  }
   requestAnimationFrame(renderFrame);
 
   // --- Diagnosegriffe -----------------------------------------------------
@@ -449,14 +585,7 @@ async function main(): Promise<void> {
      * Tick-Folge ist dieselbe wie im normalen Betrieb - deshalb ist das
      * Ergebnis aussagekraeftig und kein Sonderweg.
      */
-    runTicks: (count: number) => {
-      const rate = client.env?.rate ?? 1;
-      const dtWorld = config.sim.dt_base * rate;
-      const started = performance.now();
-      for (let i = 0; i < count; i++) step(dtWorld, 1 / config.sim.tick_hz);
-      reducer.requestReadback();
-      return { ticks: count, ms: performance.now() - started };
-    },
+    runTicks,
     /** Wartet auf den naechsten Readback und liefert die Summen. */
     readMass: () =>
       new Promise((resolve) => {
