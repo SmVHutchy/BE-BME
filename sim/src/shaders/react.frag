@@ -43,6 +43,7 @@ uniform float uMaxDensity;
 
 // aus config: mass.*
 uniform float uSedimentationRate;
+uniform uint uSedimentInterval;
 
 // aus dem Vertrag: env
 uniform float uLight;
@@ -126,9 +127,11 @@ void main() {
   nutrient += actualDeath * uRemineralization;
 
   // --- Kopplung 2: flaechiger Eintrag aus dem Niederschlag ---------------
+  // Kompensiert wie oben: gebucht wird, was tatsaechlich ankam.
   float rainfall = uInputRate * uNutrientInput * uDt;
-  nutrient += rainfall;
-  inflowAcc += rainfall;
+  float nutrientAfterRain = nutrient + rainfall;
+  inflowAcc += nutrientAfterRain - nutrient;
+  nutrient = nutrientAfterRain;
 
   // --- Kopplung 6: punktuelle Partikel aus dem Hochtonband ---------------
   if (uParticleAmount > 0.0) {
@@ -138,8 +141,9 @@ void main() {
     if (distance < uParticleRadius) {
       float falloff = 1.0 - distance / uParticleRadius;
       float particle = uParticleAmount * falloff * falloff;
-      nutrient += particle;
-      inflowAcc += particle;
+      float nutrientAfterParticle = nutrient + particle;
+      inflowAcc += nutrientAfterParticle - nutrient;
+      nutrient = nutrientAfterParticle;
     }
   }
 
@@ -149,9 +153,24 @@ void main() {
   // waere derselbe Vorgang, und zwei getrennte Senken waeren doppelt gezaehlt.
   // Auch die Sedimentation greift das Refugium nicht an - sonst waere die
   // Zusage nach einigen Wochen doch aufgezehrt, nur langsamer.
-  float sediment = max(nutrient - uRefugeFloor, 0.0) * uSedimentationRate * uDt;
-  nutrient -= sediment;
-  outflowAcc += sediment;
+  //
+  // Kompensiert, und hier wiegt es am schwersten: Die Sedimentation entzieht je
+  // Tick rund 5,7e-9, waehrend der float32-Abstand bei einem Naehrstoffwert von
+  // 0,4 bei 3e-8 liegt. Der Abzug verschwindet also meist im Rundungsfehler,
+  // waehrend der kleine Bilanzkanal den vollen Betrag bucht - Masse gilt als
+  // ausgetragen und ist doch noch da. Das war der groesste verbliebene
+  // Driftterm (docs/annahmen.md A12).
+  //
+  // Nur jeder N-te Tick traegt aus, dafuer mit dem N-fachen Betrag: Der Abzug
+  // je Einzeltick laege sonst unter dem float32-Abstand und faende schlicht
+  // nicht statt. Gleiche Gesamtwirkung, aber jeder Abzug kommt an.
+  if (uSedimentInterval == 0u || uTick % uSedimentInterval == 0u) {
+    float span = uSedimentInterval == 0u ? 1.0 : float(uSedimentInterval);
+    float sediment = max(nutrient - uRefugeFloor, 0.0) * uSedimentationRate * uDt * span;
+    float nutrientAfterSediment = nutrient - sediment;
+    outflowAcc += nutrient - nutrientAfterSediment;
+    nutrient = nutrientAfterSediment;
+  }
 
   // --- Numerische Klammern, BILANZIERT -----------------------------------
   // Der urspruengliche Code schrieb hier schlicht max(nutrient, 0.0) und

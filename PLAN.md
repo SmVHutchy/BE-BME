@@ -107,7 +107,8 @@ Simulation bis zum ausgegebenen Chronikeintrag. Breite kommt danach.
    Testendpunkt
 7. Metriken → SQLite, mit Zeitstempel, Tick und Seed
 8. Regeldetektor mit genau einer Regel: „Blüte"
-9. Chronikpipeline: Flow → Crew → Eintrag → SQLite → `GET /chronicle`
+9. Chronikpipeline: Ereignis → Chronicle-Backend → Eintrag → SQLite →
+   `GET /chronicle` (siehe Abschnitt 6 für die beiden Implementierungen)
 10. Minimale Anzeige der Chronik als Entwickler-Overlay
 11. Zeitraffermodus, Faktor 1–100, **ab dem ersten Tag**
 12. Seed-basierter RNG, vollständig deterministisch
@@ -131,90 +132,103 @@ Simulation bis zum ausgegebenen Chronikeintrag. Breite kommt danach.
 
 Nach jeder Phase wird angehalten und auf Freigabe gewartet.
 
-| Phase | Inhalt | Prüfbar an |
-|---|---|---|
-| **0** | Gerüst und Vertrag. `PLAN.md`, `CLAUDE.md`, Ordnerstruktur, `config/params.yaml`, `docs/contract.md`, `docs/mapping.md`, `docs/expose.md`. Keine Logik. | Ein fremder Entwickler versteht aus `PLAN.md` und `docs/contract.md`, was gebaut wird und wie die beiden Prozesse reden. `scripts/verify_structure.py` läuft durch. |
-| **1** | Core ohne CrewAI. Umweltdienst, Metrikspeicher, Regeldetektor, `SingleChronicle`, WebSocket-Server. | Eingespeiste synthetische Metriken lösen genau dann eine „Blüte" aus, wenn sie sollen. Tests für Detektor und Massenbilanz grün. |
-| **2** | Simulation. GLSL-Kern, geschlossener Kreislauf, Klimakopplung, Pulsempfang, Zeitraffer, Snapshot/Restore. | 10.000 Ticks im Zeitraffer ohne Absturz, Massendrift unter 2 %. |
-| **3** | CrewAI. Flow und Crew, `CrewChronicle`, Umschaltung. | Ein Chronikeintrag, dessen sämtliche Zahlen sich in der SQLite-Datenbank wiederfinden. Umschalten auf `single` ohne Codeänderung. |
-| **4** | Dauerbetrieb. Soak-Test, Health-Log, Watchdog, README. | Sechs simulierte Wochen im Zeitraffer in unter zwei Stunden, ohne Absturz, mit auswertbarem Health-Log. |
+| Phase | Inhalt | Prüfbar an | Status |
+|---|---|---|---|
+| **0** | Gerüst und Vertrag. `PLAN.md`, `CLAUDE.md`, Ordnerstruktur, `config/params.yaml`, `docs/contract.md`, `docs/mapping.md`, `docs/expose.md`. Keine Logik. | Ein fremder Entwickler versteht aus `PLAN.md` und `docs/contract.md`, was gebaut wird und wie die beiden Prozesse reden. `scripts/verify_structure.py` läuft durch. | Abgeschlossen |
+| **1** | Core ohne Framework. Umweltdienst, Metrikspeicher, Regeldetektor, `SingleChronicle`, WebSocket-Server. | Eingespeiste synthetische Metriken lösen genau dann eine „Blüte" aus, wenn sie sollen. Tests für Detektor und Massenbilanz grün. | Abgeschlossen |
+| **2** | Simulation. GLSL-Kern, geschlossener Kreislauf, Klimakopplung, Pulsempfang, Zeitraffer, Snapshot/Restore. | 10.000 Ticks im Zeitraffer ohne Absturz, Massendrift unter 2 %. | Abgeschlossen — Massendrift siehe [`docs/annahmen.md`](docs/annahmen.md) A12 |
+| **3** | Chronikpipeline, zweistufig. `TwoStepChronicle` (`chronicler` + `verifier`, zwei schlichte httpx-Aufrufe), Umschaltung gegen `SingleChronicle`. | Ein Chronikeintrag, dessen sämtliche Zahlen sich in der SQLite-Datenbank wiederfinden. Umschalten auf `single` ohne Codeänderung. | Abgeschlossen — **ohne CrewAI**, siehe Abschnitt 6 |
+| **4** | Dauerbetrieb. Soak-Test, Health-Log, Watchdog, README. | Sechs simulierte Wochen im Zeitraffer in unter zwei Stunden, ohne Absturz, mit auswertbarem Health-Log. | Offen |
 
 ---
 
-## 6. CrewAI — Umfang
+## 6. Chronikpipeline — zwei Implementierungen, kein Framework
 
-Dies ist die Stelle, an der das Projekt schiefgehen kann.
+> **Dieser Abschnitt hat den ursprünglichen Plan ersetzt, CrewAI für den
+> zweistufigen Chronikweg einzusetzen.** Phase 3 wurde ohne CrewAI umgesetzt.
+> Grund: Das Exposé nennt CrewAI an keiner Stelle und erwähnt „Agenten"
+> genau zweimal — beide Male als Abgrenzung (§3.4 gegen Park et al. 2023,
+> §5 „kein Multi-Agenten-Dialogsystem"). Ein Framework, das die Chronik über
+> mehrere Agentenrollen orchestriert, stand also nie im Exposé, sondern war
+> eine Entwurfsentscheidung dieses Plans — und sie war teurer als der
+> Nutzen: eigenes Telemetrie- und Memory-Verhalten, das aktiv abgeschaltet
+> werden musste (siehe die ursprüngliche Fassung dieses Abschnitts, unten in
+> der Versionsgeschichte), gegen zwei Rollen, die sich mit zwei einfachen
+> `httpx`-Aufrufen genauso umsetzen lassen. Die Zwei-Rollen-Idee —
+> `chronicler` formuliert, `verifier` prüft — bleibt vollständig erhalten;
+> nur das Framework fällt weg. Siehe
+> `core/src/frame_core/chronicle/two_step.py` für die Begründung im Code.
 
 Das Exposé grenzt sich in §5 ausdrücklich gegen Multi-Agenten-Simulationen ab
 und legt in §6.4 fest: **Die Ereigniserkennung leistet ein Regeldetektor, nicht
-das Sprachmodell.** Beides ist bindend. CrewAI wird deshalb an genau einer
-Stelle eingesetzt und nirgends sonst.
+das Sprachmodell.** Beides bleibt bindend, unabhängig vom Framework.
 
-**Erlaubt**
+**Zwei Implementierungen hinter dem Interface `ChronicleBackend`**
+(`core/src/frame_core/chronicle/base.py`), umschaltbar über
+`chronicle.backend` in `config/params.yaml` (`Literal["single", "verified"]`),
+ohne Codeänderung:
 
-- Ein **Flow** als deterministische Orchestrierung der Chronikpipeline.
-  `@start` / `@listen` / `@router` steuern die Reihenfolge; die Verzweigung
-  „Ereignis erkannt → schreiben / kein Ereignis → nichts tun" gehört in den Flow.
-- Eine **Crew** ausschließlich im Schreibschritt, mit genau zwei
-  Pflicht-Agenten:
-  - `chronicler` — formuliert aus dem übergebenen Ereignis und den übergebenen
-    Kennzahlen einen kurzen Logbucheintrag.
-  - `verifier` — prüft jede Aussage des Entwurfs gegen die übergebenen Zahlen
-    und verwirft oder korrigiert alles, was nicht belegt ist.
-  - Ein dritter `editor` für Register und Länge ist optional und standardmäßig
-    aus.
+- **`SingleChronicle`** (`backend: "single"`) — ein einziger Modellaufruf mit
+  striktem Prompt, ohne Framework. **Pflicht-Rückfallebene.**
+- **`TwoStepChronicle`** (`backend: "verified"`) — zwei schlichte
+  `httpx`-Aufrufe nacheinander, ohne Framework:
+  - `chronicler` formuliert aus dem übergebenen Ereignis und den übergebenen
+    Kennzahlen einen kurzen Logbucheintrag (wortgleicher Prompt zu
+    `SingleChronicle`).
+  - `verifier` prüft danach jede Aussage des Entwurfs gegen dieselben Zahlen
+    und korrigiert oder verwirft, was nicht belegt ist.
 
-**Verboten, jeweils mit Grund**
+**Warum die Rückfallebene Pflicht bleibt.** Zwei Rollen bedeuten zwei
+Modellaufrufe pro Eintrag. Gemessen wurden 19–25 s je Aufruf auf der RX 7600
+XT (siehe [`docs/annahmen.md`](docs/annahmen.md) A8); auf der Zielhardware mit
+geteiltem Speicher entsprechend mehr. **Die Chronik ist im Exposé
+Pflichtumfang, der zweistufige Weg nicht.** Das Projekt darf an dieser Stelle
+nicht kippen.
 
-| Verbot | Grund |
+**Guardrail vor Verifier.** Ob jede im Entwurf genannte Zahl in den
+übergebenen Kennzahlen vorkommt, prüft eine reine Python-Funktion
+(`chronicle/guard.py`, `guardrail_max_retries` in `config/params.yaml`) —
+deterministisch und testbar, für beide Backends gleich. Der `verifier`-Schritt
+in `TwoStepChronicle` beurteilt erst danach die inhaltlichen Aussagen. Nicht
+umgekehrt: Was Python mechanisch prüfen kann, wird nicht einem Modell
+überlassen.
+
+**Weiterhin bindend, unabhängig vom Framework:**
+
+| Regel | Grund |
 |---|---|
 | Kein LLM im Simulationstakt | Die Simulation läuft mit 30–60 Hz über Wochen. Ein Modellaufruf darin ist weder latenzverträglich noch reproduzierbar. |
 | Kein LLM in der Ereigniserkennung | Der Detektor ist reines Python: Schwellenwerte auf Zeitreihen, deterministisch, testbar. Das Exposé steht und fällt damit, dass keine Ereignisse beschrieben werden, die nie stattfanden. |
 | Keine Agenten als Bewohner der Welt | Kein Agent repräsentiert einen Organismus, keiner entscheidet im Ökosystem. Die Agenten stehen außerhalb und beschreiben. |
-| Kein Schreibzugriff auf den Simulationszustand | Die Chronikpipeline liest, sie greift nicht ein — in keiner Richtung. |
-| Keine Cloud-LLMs, kein Netzverkehr auf dem Chronikpfad | Das Modell läuft lokal über einen OpenAI-kompatiblen Endpunkt. |
+| Kein Schreibzugriff auf den Simulationszustand | Die Chronikpipeline liest, sie greift nicht ein — in keiner Richtung, auch nicht „nur zum Ausgleichen". |
+| Keine Cloud-LLMs, kein Netzverkehr auf dem Chronikpfad | Das Modell läuft lokal über einen OpenAI-kompatiblen Endpunkt (`chronicle.base_url`, LM Studio). |
 | Nichts CUDA-Abhängiges | Entwicklungshardware ist eine AMD RX 7600 XT. |
-
-**Pflicht-Rückfallebene.** Das Interface `ChronicleBackend` hat zwei
-Implementierungen:
-
-- `CrewChronicle` — der CrewAI-Weg oben
-- `SingleChronicle` — ein einziger Modellaufruf mit striktem Prompt, ohne
-  Framework
-
-Umschaltbar über `chronicle.backend` in `config/params.yaml`, ohne
-Codeänderung. Grund: Zwei Agenten bedeuten zwei Modellaufrufe pro Eintrag; auf
-der späteren Zielhardware kann das zu langsam werden. **Die Chronik ist im
-Exposé Pflichtumfang, CrewAI nicht.** Das Projekt darf an dieser Stelle nicht
-kippen.
-
-**Zwei Fallen, über Context7 verifiziert:**
-
-- **Telemetrie ist standardmäßig an.** CrewAI sendet anonyme Nutzungsdaten über
-  OpenTelemetry — Netzverkehr auf dem Chronikpfad. `CREWAI_DISABLE_TELEMETRY`
-  und `OTEL_SDK_DISABLED` gehören gesetzt.
-- **`memory=True` ruft die OpenAI-Cloud.** Ohne eigenen Embedder nutzt
-  CrewAI-Memory `text-embedding-3-large`. Memory bleibt aus — es würde außerdem
-  frühere Einträge einmischen und die Garantie brechen, dass ein Eintrag nur die
-  übergebenen Zahlen enthält.
-
-**Zwei Bausteine, die zur Aufgabe passen:** `guardrail` mit
-`guardrail_max_retries` prüft die Ausgabe mit einer reinen Python-Funktion,
-bevor sie angenommen wird — damit fängt Python mechanisch jede Zahl ab, die
-nicht in den Kennzahlen vorkommt, und der `verifier` beurteilt nur noch die
-inhaltlichen Aussagen. `output_pydantic` liefert typisierte statt geparster
-Ausgabe.
 
 **Kein MCP auf dem Chronikpfad.** MCP gibt dem Modell Werkzeuge. Könnte der
 Chronist die Metrikdatenbank selbst abfragen, hielte `metrics_ref` nicht mehr
-fest, was er gesehen hat, und die Abnahmebedingung dieser Phase wäre prinzipiell
-unprüfbar. Der Endpunkt `/v1/chat/completions`, den CrewAI braucht, unterstützt
-ohnehin keine MCPs — die Regel wird vom Transport erzwungen.
+fest, was er gesehen hat, und die Abnahmebedingung dieser Phase wäre
+prinzipiell unprüfbar. Der Chronist bekommt ausschließlich die übergebenen
+Zahlen (`DetectedEvent.all_numbers()`), keine Werkzeuge.
 
-**Vor der ersten Zeile CrewAI-Code:** aktuelle API über Context7 holen
-(`resolve-library-id` → `query-docs`). CrewAI ist in der 1.x-Linie unter
-wöchentlicher Release-Kadenz; die Syntax wird nicht aus dem Gedächtnis
-geschrieben.
+<details>
+<summary>Ursprüngliche Fassung dieses Abschnitts, vor der Streichung von CrewAI</summary>
+
+> Dies war die Stelle, an der das Projekt schiefgehen konnte. CrewAI war für
+> genau einen Schreibschritt vorgesehen: ein **Flow** als deterministische
+> Orchestrierung (`@start` / `@listen` / `@router`), darin eine **Crew** mit
+> den Pflicht-Agenten `chronicler` und `verifier`, optional ein dritter
+> `editor`. Pflicht-Rückfallebene war `SingleChronicle` gegen `CrewChronicle`,
+> umschaltbar über `chronicle.backend` zwischen `single` und `crew`.
+>
+> Zwei über Context7 verifizierte Fallen wären zu beachten gewesen:
+> Telemetrie ist bei CrewAI standardmäßig an (`CREWAI_DISABLE_TELEMETRY`,
+> `OTEL_SDK_DISABLED` nötig), und `memory=True` ruft ohne eigenen Embedder die
+> OpenAI-Cloud über `text-embedding-3-large`. Beides wäre Netzverkehr auf dem
+> Chronikpfad gewesen und musste aktiv unterdrückt werden — genau die Art von
+> Betriebslast, die der jetzige Weg mit zwei einfachen HTTP-Aufrufen gar
+> nicht erst hat.
+
+</details>
 
 ---
 
@@ -225,8 +239,8 @@ geschrieben.
   unter 2 %, Biomasse konvergiert nicht auf einen Fixpunkt.
 - Mindestens ein Chronikeintrag existiert, und jede darin genannte Zahl ist in
   der Metrik-Datenbank auffindbar.
-- `chronicle.backend` lässt sich zwischen `crew` und `single` umschalten, beide
-  funktionieren.
+- `chronicle.backend` lässt sich zwischen `verified` und `single` umschalten,
+  beide funktionieren.
 - **Reproduzierbar** sind Lauf, Ereignisse und Kennzahlen: Gleicher Seed,
   gleiche Config und gleicher Wetterlog erzeugen dieselben Ereignisse zu
   denselben Ticks. **Überprüfbar** — nicht reproduzierbar — ist der Chroniktext:
@@ -235,13 +249,28 @@ geschrieben.
   A10).
 - [`docs/annahmen.md`](docs/annahmen.md) listet jede getroffene Annahme.
 
+**Noch ungeprüft, obwohl hier gefordert:**
+
+- **Reproduzierbarkeit eines Laufs aus Seed, Config und Wetterlog** (Punkt
+  oben, Exposé-Prämisse). Dass Simulation, Metrikzeitreihe und
+  Detektorausgabe bei gleichem `run.seed`, gleicher `config/params.yaml` und
+  gleichem `weather_raw.jsonl` tatsächlich dieselben Ereignisse zu denselben
+  Ticks erzeugen, ist bisher nicht durch einen Vergleichslauf nachgewiesen —
+  nur durch die Konstruktion (seed-basierter RNG, kein Zugriff auf Wanduhrzeit
+  im Shader) plausibel gemacht. **Offen.**
+- **Snapshot/Restore** (Prototyp 0, Punkt 13; Exposé §7.4). Dass ein Lauf nach
+  einem Neustart aus dem letzten Snapshot in `data/snapshots` mit
+  unverändertem Zustand — Felder, Massenbilanz-Akkumulatoren, `world_time` —
+  weiterläuft, wurde bisher nicht durch einen tatsächlichen Neustart während
+  eines laufenden Zeitrafferlaufs verifiziert. **Offen.**
+
 ---
 
 ## 8. Werkzeuge und Versionen
 
 | | Version | Anmerkung |
 |---|---|---|
-| Python | **3.13**, projektlokal über `uv` | CrewAI 1.15.8 verlangt `>=3.10,<3.14`. Das systemweit installierte Python 3.14 ist **nicht** verwendbar. |
+| Python | **3.13**, projektlokal über `uv` | `requires-python = ">=3.13"`, ohne Obergrenze. Die frühere Obergrenze `<3.14` kam ausschließlich von CrewAI 1.x; seit Phase 3 läuft der zweistufige Chronikpfad über zwei einfache `httpx`-Aufrufe statt über CrewAI (Abschnitt 6), damit entfällt der Grund für die Obergrenze mit ihr. Das systemweit installierte Python 3.14 wird trotzdem nicht verwendet — projektlokal über `uv` bleibt Vorgabe, damit Entwicklungs- und Zielumgebung denselben Interpreter benutzen. |
 | Node | 25.x | für `sim/` |
 | GPU | AMD RX 7600 XT (Entwicklung) | kein CUDA, WebGL2 über OpenGL/Vulkan |
 | LLM | LM Studio, `http://localhost:1234/v1` | lokal, OpenAI-kompatibel |

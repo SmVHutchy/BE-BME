@@ -114,6 +114,10 @@ class FlowConfig(BaseModel):
 class MassConfig(BaseModel):
     model_config = _STRICT
     sedimentation_half_life_days: float = Field(gt=0.0)
+    # Nur jeder N-te Tick traegt aus, dafuer mit dem N-fachen Betrag. Noetig,
+    # weil der Abzug je Tick sonst unter der float32-Aufloesung liegt und
+    # faktisch nicht stattfindet (docs/annahmen.md A12).
+    sedimentation_interval_ticks: int = Field(gt=0)
     corridor_min: float = Field(gt=0.0)
     corridor_max: float = Field(gt=0.0)
     drift_tolerance_pct: float = Field(gt=0.0)

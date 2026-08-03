@@ -236,6 +236,25 @@ mass:
   # getrennt zu fuehren waere derselbe Vorgang doppelt: Geloester Naehrstoff,
   # der zerfaellt, ist genau der, der dem Kreislauf entzogen wird.
   sedimentation_half_life_days: 90.0
+
+  # Nur jeder N-te Tick traegt aus, dafuer mit dem N-fachen Betrag.
+  #
+  # Das ist keine Optimierung, sondern eine Notwendigkeit der Zahlendarstellung.
+  # Gemessen am 01.08.2026: Der Austrag je Tick betraegt rund
+  #     0,4 * ln2/(90*86400) * 0,16 = 5,7e-9
+  # waehrend der Abstand zweier darstellbarer float32-Werte bei einem
+  # Naehrstoffwert von 0,4 bei rund 3,0e-8 liegt - fuenfmal groesser. Der Abzug
+  # landet also NIE in der Zahl. Ein Siebentagelauf wies exakt 0,0 Austrag aus,
+  # und damit existierte der Austrag aus Expose 6.2 schlicht nicht.
+  #
+  # Mit N = 100 betraegt der einzelne Abzug 5,7e-7, rund das Neunzehnfache des
+  # Darstellungsabstands - er kommt an. Die Gesamtwirkung ist dieselbe.
+  #
+  # Die Stueckelung ist unbedenklich: 100 Ticks sind 10 Weltsekunden, gemessen
+  # gegen eine Halbwertszeit von 90 Welttagen. Innerhalb eines Intervalls wird
+  # mit dem aktuellen dt gerechnet, das sich ueber 10 Weltsekunden praktisch
+  # nicht aendert.
+  sedimentation_interval_ticks: 100
   # Korridor, in dem die Gesamtmasse schwingen soll (relativ zur Startmasse).
   corridor_min: 0.70
   corridor_max: 1.40

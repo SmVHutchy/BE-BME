@@ -8,7 +8,10 @@ Der Zweck dieser Datei ist nicht Buchhaltung: In der Arbeit muss jede
 Entwurfsentscheidung begruendet werden, und eine Annahme, die sechs Monate
 spaeter niemand mehr als Annahme erkennt, wird stillschweigend zur Tatsache.
 
-**Stand: Phase 0.**
+**Stand: Phasen 0 bis 4 gebaut** (A1 bis A17). Erledigte Annahmen bleiben mit
+ihrer Auflösung stehen und werden nicht gelöscht — für die Arbeit zählt der Weg
+zur Entscheidung, nicht nur ihr Ergebnis. Überholte Annahmen sind als solche
+gekennzeichnet und verweisen auf ihre Nachfolgerin (siehe A6 → A14).
 
 ---
 
@@ -351,50 +354,123 @@ laeuft also ueber die Weltzeit durch - genau das, was zuvor fehlte.
 
 ---
 
-## A12 — Massendrift der semi-lagrangeschen Advektion
+## A12 — Massendrift: fuenf sich gegenseitig maskierende Fehler (BEHOBEN)
 
-**Ort:** `sim/src/shaders/advect.frag`
+**Ort:** `sim/src/shaders/react.frag`, `sim/src/shaders/advect.frag`,
+`config/params.yaml` → `field.nutrient.refuge_floor`, `field.producer.max_density`
 
-**Gemessen am 30.07.2026** im selben Lauf. Der Residualsaldo verlaeuft nicht
-monoton:
+**Ausgangsbefund.** Ueber sieben Welttage meldete die Massenbilanz 6,344 %
+unerklaerte Masse bei einer Toleranz von 2 % (`mass.drift_tolerance_pct`). Der
+naheliegende Verdacht - die semi-lagrangesche Advektion aus A12 in der
+urspruenglichen Fassung - war richtig, aber bei weitem nicht die ganze
+Geschichte. Es waren **fuenf verschiedene Fehler**, die sich gegenseitig
+maskiert haben: Jeder wurde erst sichtbar, nachdem der davor liegende behoben
+war. Das ist der eigentliche Befund dieses Eintrags, nicht die einzelnen Fixes.
 
-| Tick | Welttage | Biomasse | Residuum |
-|---|---|---|---|
-| 10.144 | 0,15 | 3520 | −0,97 % |
-| 350.750 | 5,1 | 29 | **−2,34 %** |
-| 630.960 | 9,2 | 1 | −1,38 % |
-| 931.250 | 13,6 | 0 | −0,46 % |
+**1. Stille Klammern.** `max(nutrient, 0.0)` und `clamp(producer, ...)` in
+`react.frag` erzeugten bzw. vernichteten Masse, ohne sie zu buchen - numerisches
+Ueberschwingen an steilen Uebergaengen wurde stillschweigend auf null gehoben.
+Nach Bilanzierung dieser beiden Klammern: **6,344 % → 4,538 %**. Der Fehler war
+bis dahin verdeckt, weil die ohnehin driftende Advektion ein groesseres Signal
+lieferte.
 
-Die Drift erreicht ihren Hoechstwert, **solange das System lebt**, und faellt
-danach wieder - ein totes Feld hat keine steilen Gradienten mehr, an denen die
-bilineare Interpolation Masse verliert. Der Spitzenwert von 2,34 % liegt ueber
-der Toleranz von `mass.drift_tolerance_pct`.
+**2. Semi-lagrangesche Advektion ist nicht konservativ.** Das war der
+urspruengliche Gegenstand dieser Annahme (siehe die durchgestrichene Fassung
+unten in der Versionsgeschichte). Ersetzt durch **Reintegration Tracking** nach
+Flow-Lenia, das Expose §3.2 ohnehin als Grundlage fuehrt: Jede Quellzelle
+verteilt ihre Masse mit bilinearen Gewichten auf die vier Zellen um ihren
+Zielort, die Gewichte summieren sich exakt zu eins. Im Fragment-Shader als
+Gather ueber die 3×3-Nachbarschaft der Zielzelle umgesetzt, gueltig solange die
+Verschiebung je Schritt unter einer Zelle bleibt - sie liegt bei den
+ausgelieferten Parametern bei rund 0,21 Zellen, mit deutlichem Abstand.
 
-**Begruendung der Ursache.** Semi-lagrangesche Advektion ist masseerhaltend nur
-im Grenzfall verschwindender Schrittweite; die bilineare Ruecksampelung glaettet
-und verliert dabei Masse an steilen Uebergaengen. Das ist ein bekanntes und
-dokumentiertes Verhalten des Operators, kein Umsetzungsfehler.
+**3. Die Dichte-Schere.** Nach der konservativen Advektion schnitt
+`producer > max_density` zusammengeschobene Biomasse ab und buchte sie als
+Austrag. Das war ein neuer, eigener Fehler: Konservative Advektion erhaelt die
+Summe, verhindert aber keine lokale Konzentration - konvergente Stroemung
+schiebt Masse zusammen, und das ist physikalisch richtig. Gemessen: Biomasse
+5.728 → 55 binnen eines halben Welttages, waehrend der Austrag um denselben
+Betrag stieg. Der Fehler war verdeckt, solange die alte dissipative Advektion
+noch lief - sie glaettete, statt je etwas zusammenzuschieben. `max_density` ist
+eine **Wachstumsgrenze** und wirkt bereits ueber den Faktor
+`(1 − producer/max_density)` im Wachstumsterm; an der Dichteobergrenze wird
+seither bewusst nicht mehr geschnitten.
 
-**Aufloesung, zu entscheiden.** Das Exposé sieht in Risiko 2 zwei Wege vor:
-masseerhaltende Advektion in Anlehnung an Flow-Lenia, oder "bei Bedarf
-Renormalisierung pro Zeitschritt". Der zweite Weg ist billig - die Reduktion auf
-1x1 laeuft ohnehin jeden Tick, ihr Ergebnis liesse sich im naechsten Schritt als
-Korrekturfaktor lesen, ohne Readback. Wichtig dabei: Die Korrektur muss
-**protokolliert** werden, sonst waere der Residualsaldo per Konstruktion null und
-die Metrik wertlos. Der ausgewiesene Wert waere dann die noetige Korrektur - also
-weiterhin genau das Mass fuer die Drift.
+**4. Das Refugium als Zufuhr.** Leergezehrte Zellen wurden in jedem Tick auf
+`refuge_floor` aufgefuellt - eine unbegrenzte Naehrstoffquelle, sofern die
+Produzenten sie sofort wieder aufzehren. Gemessen: **163.817 von 165.562
+Gesamteintrag kamen daher, 98,9 %**, gegen 1.746 aus echtem Regen. Die
+Gesamtmasse stieg auf das **2,46-fache** der Startmasse - der geschlossene
+Kreislauf aus Expose §6.2 war ausgehebelt, und zwar durch eine Massnahme, die
+gegen Risiko 1 gedacht war (kein dauerhaft totes Areal). Behoben als
+**Entzugsschutz**: Wachstum und Sedimentation duerfen die letzte
+`refuge_floor` nicht antasten. Gleiche Zusage - keine Flaeche faellt dauerhaft
+tot - aber keine Masse mehr erzeugt.
 
-**Zusammenhang mit A11.** Der Spitzenwert wurde in einem Lauf gemessen, der
-aufgrund von A11 unrealistisch war (dauerhafte Nacht, kollabierende Biomasse).
-Die Drift ist erst nach Behebung von A11 belastbar zu beziffern. **A11 ist seit
-dem 30.07.2026 behoben; die Neumessung steht aus** und ist der naechste
-Schritt.
+**5. Asymmetrische Uebertragung in float32.** Der Naehrstoff liegt bei rund
+0,4, der Abstand zweier darstellbarer float32-Zahlen dort bei rund 3·10⁻⁸. Ist
+der uebertragene Betrag kleiner als dieser Abstand, verschwindet der Abzug beim
+grossen Feld, waehrend die Gutschrift beim kleinen Bilanzkanal ankommt - Masse
+aus dem Nichts, in jedem Tick, immer in dieselbe Richtung. Das Residuum wuchs
+**linear** mit 0,58 % je Welttag, und genau diese Linearitaet hat den
+systematischen Term verraten: zufaellige Rundungsfehler waeren mit der Wurzel
+der Schrittzahl gewachsen, nicht linear mit ihr. Behoben durch **kompensierte
+Uebertragung** an allen fuenf betroffenen Stellen im Shader: gebucht wird, was
+tatsaechlich abging, nicht was abgehen sollte (`nutrientAfterX = nutrient - x;
+actualX = nutrient - nutrientAfterX`). Driftrate danach **−0,105 % je
+Welttag**, Faktor 5,5 besser als zuvor.
 
-**Zusammenhang mit dem Look.** Die Dissipation, die hier Masse verliert,
-glaettet genau die feine Struktur, die das Look-Development anstrebt
-(docs/lookdev.md). Masseerhaltende Advektion nach Flow-Lenia loeste beides;
-eine blosse Renormalisierung nur die Bilanz. Das verschiebt die Abwaegung
-deutlich zugunsten der ersten Variante.
+**Ergebnis.** Ein Siebentagelauf mit den behobenen fuenf Fehlern zeigt rund
+−1 % Residuum ueber die volle Laufzeit - innerhalb der 2 % Toleranz.
+
+**Warum kein Unit-Test das gefunden haette.** Keiner der fuenf Fehler waere in
+einem isolierten Test aufgefallen: Jeder brauchte einen Lauf ueber Millionen
+Ticks und eine Metrik, die unerklaerte Masse ueber die Zeit anzeigt, um
+sichtbar zu werden - und jeder war erst messbar, nachdem der davorliegende
+behoben war. Genau das ist die Rolle, die Expose §6.2 der Massenbilanz
+zuschreibt: Stabilitaetsmetrik fuer TF2 und Nachweis, dass der Kreislauf haelt.
+Sie hat sich hier zusaetzlich als das wirksamste Diagnosewerkzeug des gesamten
+Simulationskerns erwiesen - nicht als Abnahmekriterium am Ende, sondern als
+Instrument, das waehrend der Arbeit selbst Fehler freigelegt hat, die sonst
+verdeckt geblieben waeren.
+
+**Noch offen: Sedimentation findet faktisch nicht statt.** Die Sedimentation
+entzieht je Tick rund 5,7·10⁻⁹ bei einem float32-Abstand von rund 3·10⁻⁸ am
+Naehrstoffwert 0,4 - der Betrag liegt also unter der Darstellbarkeitsgrenze,
+und der gemessene Austrag ist exakt null. Expose §6.2 verlangt aber
+ausdruecklich einen Austrag gegenueber dem Eintrag, nicht nur einen
+Bilanzkanal, der ihn korrekt mit null beziffert. Die Behebung - Sedimentation
+nicht jeden Tick mit einem winzigen, sondern alle N Ticks mit dem N-fachen
+Betrag - ist in Arbeit und noch nicht verifiziert.
+
+**Zusammenhang mit dem Look.** Die Dissipation, die die urspruengliche
+Advektion verloren hat, glaettete genau die feine Struktur, die das
+Look-Development anstrebt (docs/lookdev.md). Masseerhaltende Advektion nach
+Flow-Lenia loest beides zugleich - Bilanz und sichtbare Struktur -, waehrend
+eine blosse Renormalisierung nur die Bilanz geloest haette. Diese Annahme war
+der Grund, warum die Wahl zugunsten von Flow-Lenia gefallen ist.
+
+<details>
+<summary>Urspruengliche Fassung dieses Eintrags (30.07.2026), vor der Behebung</summary>
+
+> **Gemessen am 30.07.2026** im selben Lauf wie A11. Der Residualsaldo verlief
+> nicht monoton: −0,97 % bei 0,15 Welttagen, ein Spitzenwert von **−2,34 %** bei
+> 5,1 Welttagen, dann wieder abfallend auf −0,46 % bei 13,6 Welttagen. Die
+> Drift erreichte ihren Hoechstwert, solange das System lebte, und fiel danach
+> wieder - ein totes Feld hat keine steilen Gradienten mehr, an denen die
+> bilineare Interpolation Masse verliert. Der Spitzenwert lag ueber der
+> Toleranz von `mass.drift_tolerance_pct`.
+>
+> Ursache: Semi-lagrangesche Advektion ist masseerhaltend nur im Grenzfall
+> verschwindender Schrittweite; die bilineare Ruecksampelung glaettet und
+> verliert dabei Masse an steilen Uebergaengen - bekanntes Verhalten des
+> Operators, kein Umsetzungsfehler. Aufloesung damals offen zwischen
+> masseerhaltender Advektion nach Flow-Lenia und protokollierter
+> Renormalisierung pro Zeitschritt (Expose Risiko 2). Der Spitzenwert war
+> zudem in einem durch A11 unrealistischen Lauf gemessen (dauerhafte Nacht,
+> kollabierende Biomasse) und daher nicht belastbar zu beziffern.
+
+</details>
 
 ---
 
@@ -483,6 +559,27 @@ abdecken. `max_window_samples` deckelt die Kosten - im Feldbetrieb fielen in
 Dieselbe Kurve, einmal fein (6000 Punkte, Feldbetrieb) und einmal grob
 (240 Punkte, Zeitraffer) abgetastet, ergibt dieselbe Bluetenentscheidung.
 
+**Nachtrag: der Abtastdeckel `sim.max_world_seconds_per_sample`.** Das
+Weltzeitfenster allein reichte nicht - ohne einen Deckel auf den Abstand
+zweier Readbacks skaliert die Abtastdichte selbst mit dem Zeitraffer. Bei
+`speed = 500` liegen zwischen zwei Messpunkten 2.500 Weltsekunden statt 5 im
+Feldbetrieb. Gemessen: Ein Siebentagelauf erzeugte dadurch nur **79
+Messpunkte**, waehrend `min_samples` auf 120 steht - der Detektor kam nie ueber
+seine statistische Untergrenze, und die Chronik blieb zwangslaeufig leer. Nicht
+weil kein Ereignis stattfand, sondern weil zu wenige Stichproben vorlagen, um
+darueber ueberhaupt zu urteilen.
+
+**Ein erster Behebungsversuch griff ins Leere.** Der erste Fix deckelte nur die
+Abschnittslaenge innerhalb eines Zeitraffer-Bursts, waehrend der Readback von
+der GPU weiterhin ueber die Wanduhrzeit ausgeloest wurde
+(`sim.readback_interval_s`) - der eigentliche Engpass blieb also unberuehrt.
+Vorhergesagt waren 156 Messpunkte, gemessen wurden 158: Die Aenderung tat fast
+nichts. Erst als die Ausloesung selbst auf den Weltzeitdeckel umgestellt wurde
+(`max_world_seconds_per_sample`, siehe `config/params.yaml` → `sim`), stieg die
+Zahl auf **303 Punkte**. Der Fund ist eine Erinnerung daran, dass ein
+Deckelwert wirkungslos bleibt, wenn er neben statt an der tatsaechlichen
+Ausloeseschwelle sitzt.
+
 ---
 
 ## A15 — Wachstum gegen Sterben: die Drosselungsfalle
@@ -538,6 +635,47 @@ verborgenes Fenster fuehrt rAF ueberhaupt nicht mehr aus. Der Zeitgeber laeuft
 weiter, nur langsamer - die Welt bleibt also stehen, statt zu sterben. Das ist
 der Unterschied zwischen der damaligen Fehlkonstruktion und dieser
 Betriebseigenschaft.
+
+---
+
+## A17 — In Prototyp 0 ist keine anhaltende Schwingung zu erwarten
+
+**Ort:** Erwartungshaltung an die Chronik in Prototyp 0; betrifft die
+Interpretation der Zeitrafferlaeufe und die Abnahmebedingung „Biomasse
+konvergiert nicht auf einen Fixpunkt" (`PLAN.md`, Definition of Done).
+
+**Der Befund.** Expose §6.2 schreibt die dauerhafte Bewegung des Systems
+ausdruecklich der Raeuber-Beute-Kopplung zu - also den Konsumenten, die erst in
+Prototyp 1 hinzukommen. Prototyp 0 hat nur eine trophische Ebene: Produzenten
+und Naehrstoff. Fuer ein System dieser Art ist eine **gedaempfte Annaeherung an
+eine Tragfaehigkeit** zu erwarten, keine anhaltende Schwingung - eine
+Raeuber-Beute-Dynamik braucht mindestens zwei gekoppelte Populationen, um sich
+selbst zu ueberschiessen.
+
+**Woher die bisher gemessene Varianz stammt.** Sie stammt ueberwiegend aus dem
+Tagesgang, also aus der Antriebsgroesse Licht, nicht aus einer Eigendynamik des
+Systems. Ein System, das im Wesentlichen seinem Antrieb folgt, erzeugt keine
+Bluete im Sinn des Detektors - eine Bluete ist per Definition ein Ausschlag
+**gegenueber** dem gleitenden Median, nicht eine Wiederholung desselben Musters
+im Tagesrhythmus.
+
+**Folge fuer die Erwartung an die Chronik.** Bleibt die Chronik in Prototyp 0
+duenn oder leer, ist das nach diesem Befund ein **strukturelles Ergebnis und
+kein Defekt** - und es gehoert so in die Arbeit, nicht als offener
+Debugging-Punkt. Ein gleitender Median, der mit monoton wachsender Biomasse
+selbst mitwaechst, kann per Konstruktion keinen Ausschlag gegen sich selbst
+registrieren; eine Bluete braucht einen Ausschlag, keinen Anstieg.
+
+**Beleg.** Beide bisherigen Siebentagelaeufe erzeugten null Chronikeintraege,
+bei monoton wachsender Biomasse von 3.768 auf 60.537. Das ist konsistent mit
+der obigen Erwartung, nicht mit einem Fehler im Detektor (siehe A14, wo der
+Fehler - zu wenige oder falsch bemessene Stichproben - ein anderer und bereits
+behobener war).
+
+**Aufloesung.** Keine Codeaenderung noetig. Fuer die Arbeit ist festzuhalten,
+dass ein Vergleich „Chronikdichte Prototyp 0 gegen Prototyp 1" erst nach
+Einfuehrung der Konsumenten aussagekraeftig ist - vorher fehlt die Kopplung, die
+laut Expose §6.2 die Bewegung ueberhaupt erzeugt.
 
 ---
 

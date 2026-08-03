@@ -220,6 +220,7 @@ async function main(): Promise<void> {
     programs.react.setFloat("uDeathRate", rates.deathRate);
     programs.react.setFloat("uMaxDensity", config.field.producer.max_density);
     programs.react.setFloat("uSedimentationRate", rates.sedimentationRate);
+    programs.react.setInt("uSedimentInterval", config.mass.sedimentation_interval_ticks);
     programs.react.setFloat("uLight", light);
     programs.react.setFloat("uNutrientInput", nutrientInput);
     programs.react.setVec2("uParticlePos", high?.x ?? 0, high?.y ?? 0);

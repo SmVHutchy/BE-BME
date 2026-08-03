@@ -50,6 +50,8 @@ export interface SimConfig {
   };
   mass: {
     sedimentation_half_life_days: number;
+    /** Nur jeder N-te Tick traegt aus, dafuer N-fach (A12). */
+    sedimentation_interval_ticks: number;
     corridor_min: number;
     corridor_max: number;
     drift_tolerance_pct: number;
