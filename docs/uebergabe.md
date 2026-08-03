@@ -190,6 +190,125 @@ den float32-Term identifiziert.
 
 ---
 
+## Agenten-Anweisung
+
+Ein frisch gestarteter Agent kennt A1 bis A17 nicht. In diesem Repo ist das ein
+echtes Risiko, kein theoretisches: Er könnte in bester Absicht die Dichte-Schere
+wieder einbauen oder das Refugium zurück auf Zufuhr stellen — beides waren
+Fehler, die eine Sitzung lang gekostet haben, und beide sehen im Code
+vernünftig aus. Der **Pflichtkopf** unten trägt das mit.
+
+### Pflichtkopf für jedes Briefing
+
+```text
+Du arbeitest im Repository E:\Projekte\BE-BME an einer Bachelorarbeit
+(künstliches Ökosystem im Bilderrahmen, Dauerbetrieb über Monate).
+
+LIES ZUERST, vollständig:
+  CLAUDE.md          — sieben nicht verhandelbare Regeln
+  docs/annahmen.md   — A1 bis A17, das Gedächtnis des Projekts
+  docs/uebergabe.md  — Stand, Fallen, Arbeitspakete
+
+SIEBEN HARTE REGELN, die du nicht verletzen darfst:
+1. Eine Eingangsgröße, ein Angriffspunkt. Keine siebte Kopplung.
+2. Kein Sprachmodell im Simulationstakt.
+3. Kein Sprachmodell in der Ereigniserkennung — der Detektor ist reines Python.
+4. Der Chronikpfad liest, er greift nicht ein. Kein Schreibzugriff auf den
+   Simulationszustand, in keiner Richtung.
+5. Kein Netzverkehr auf dem Chronikpfad. Nur der lokale Endpunkt aus der Config.
+6. Nichts CUDA-Abhängiges.
+7. Keine Magic Numbers. Jeder Zahlenwert kommt MIT begründender Kommentarzeile
+   in config/params.yaml, nie als Literal in Shader oder Detektor.
+
+DIE OFFENE ENTSCHEIDUNG: Die Interaktionsform (Exposé §6.5) ist ausdrücklich
+offen und darf auch nicht IMPLIZIT festgelegt werden — nicht durch ein
+Config-Feld, nicht durch ein Modul, nicht durch eine Vertragsnachricht. Wenn dir
+eine Stelle begegnet, an der die Entscheidung fallen müsste: anhalten und
+fragen. Nicht die naheliegende Variante wählen und weiterbauen.
+
+FÜNF DINGE, DIE DU NICHT RÜCKGÄNGIG MACHEN DARFST — sie sehen jeweils wie
+Verbesserungen aus und waren teuer erkämpft (docs/annahmen.md A12):
+- KEINE Schere an `max_density` in react.frag. Das ist eine Wachstumsgrenze und
+  wirkt bereits über den Faktor (1 − producer/max_density). Sie zusätzlich als
+  nachträglichen Schnitt zu benutzen löscht Masse: Biomasse fiel 5.728 → 55.
+- Das Refugium ist ENTZUGSSCHUTZ, keine Zufuhr. Als Auffüllung war es eine
+  unbegrenzte Nährstoffquelle — 98,9 % des Gesamteintrags.
+- Die Advektion ist masseerhaltend (Reintegration Tracking). Nicht durch
+  semi-lagrangesche Rücksampelung ersetzen, die ist nicht konservativ.
+- Übertragungen sind KOMPENSIERT: gebucht wird, was tatsächlich abging, nicht
+  was abgehen sollte. Sonst kippt die float32-Asymmetrie die Bilanz.
+- `sim.speed` vervielfacht die TAKTRATE, nicht den Zeitschritt. Über dt
+  skaliert würde die Diffusion sofort divergieren.
+
+ARBEITSWEISE:
+- Ändere immer nur eine Sache und miss danach. Die Massenbilanz hat fünf Fehler
+  aufgedeckt, die sich gegenseitig maskierten — jeder wurde erst sichtbar,
+  nachdem der davor behoben war.
+- Bei Annahmen: `# ANNAHME:` im Code UND ein Eintrag in docs/annahmen.md.
+- Code und Bezeichner englisch, Kommentare und Doku deutsch.
+- Läuft `core` beim Testen: aus dem WURZELVERZEICHNIS starten, mit
+  `uv run --project core uvicorn frame_core.api:app --port 8000`.
+
+ABNAHME, immer:
+- `cd core && uv run pytest -q` grün (derzeit 78 Tests)
+- `uv run --with pyyaml python scripts/verify_structure.py` bestanden
+- bei Änderungen unter sim/: `cd sim && npx tsc --noEmit` sauber
+- KEIN Commit. Änderungen im Arbeitsbaum liegen lassen — die Hauptsitzung prüft
+  gegen die sieben Regeln und committet.
+
+BERICHTE AM ENDE: welche Dateien du geändert hast, welche neuen Config-Schlüssel
+mit welcher Begründung entstanden sind, und ob dir etwas aufgefallen ist, das
+gegen eine der sieben Regeln arbeitet — auch außerhalb deines Auftrags. Melde
+es, statt es stillschweigend zu übergehen oder eigenmächtig zu ändern.
+```
+
+### Was in jedes Briefing zusätzlich gehört
+
+**Sperrbereiche, namentlich.** Nicht „fass nichts anderes an", sondern die
+konkreten Pfade: „FASSE NICHT AN: `sim/`, `core/src/frame_core/detect/`,
+`docs/`. Dort läuft parallel andere Arbeit." Ohne das räumen zwei Agenten
+dieselbe Datei auf.
+
+**Warum eine Entscheidung so gefallen ist**, nicht nur was zu tun ist. Der
+Chronik-Agent brauchte den Satz „CrewAI wurde gestrichen, weil das Exposé
+Agenten nur als Abgrenzung nennt" — sonst hätte er gebaut, was gerade bewusst
+verworfen worden war.
+
+**Zahlen statt Adjektive.** „Der Austrag stand bei exakt 0,0" ist überprüfbar,
+„die Sedimentation funktionierte nicht richtig" nicht.
+
+### Fertiges Briefing für Paket 2
+
+```text
+[Pflichtkopf einfügen]
+
+AUFGABE: `env_applied` um die Weltzeit ergänzen.
+
+Die Tabelle in core/src/frame_core/metrics/store.py hat nur einen
+Wanduhr-Zeitstempel. Der Docstring desselben Moduls behauptet, sie halte fest,
+„welche env-Werte bei welchem Tick galten" — das stimmt nicht, und deshalb kann
+scripts/verify_reproducibility.py die Klimawerte nur ordinal vergleichen statt
+tickgenau. Für die Reproduzierbarkeit aus Seed, Config und Wetterlog ist das
+eine echte Lücke: Die Glättung hängt vom Zeitpunkt der Nachführung ab, und der
+ist aus den Rohdaten allein nicht ableitbar.
+
+`metrics` hat `world_time` bereits — orientiere dich daran, samt Index.
+
+BERÜHRT: store.py (Schema, insert_env, Index), api.py (Aufrufstelle in
+environment_push_loop), scripts/verify_reproducibility.py (Vergleich von
+ordinal auf tickgenau umstellen), ein Test in core/tests/.
+
+FASSE NICHT AN: sim/, config/params.yaml, docs/, PLAN.md, README.md.
+
+Die Datenbank unter data/ ist Wegwerfware und wird vor jedem Lauf gelöscht —
+eine Migration brauchst du nicht, eine Schemaänderung genügt.
+
+ABNAHME zusätzlich: verify_reproducibility.py --help läuft weiterhin, und das
+Skript meldet sauber, wenn nur ein Lauf in der Datenbank liegt.
+```
+
+---
+
 ## Weiterhin ausdrücklich offen
 
 Die **Interaktionsform** (Exposé §6.5) — Sprache, Anwesenheit oder beides. Sie
