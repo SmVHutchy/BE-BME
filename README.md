@@ -1,6 +1,10 @@
 <div align="center">
 
-# Ökosystem im Bilderrahmen
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/media/banner-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/media/banner-light.png">
+  <img alt="Ökosystem im Bilderrahmen — Bachelorarbeit Media Engineering" src="docs/media/banner-light.png" width="820">
+</picture>
 
 **Ein künstliches Ökosystem, das in einem Bilderrahmen an der Wand in Echtzeit läuft — über Monate, gekoppelt an das echte Wetter des Standorts.**
 
